@@ -30,6 +30,7 @@ pub mod pds {
             takedownRef -> Nullable<Varchar>,
             deactivatedAt -> Nullable<Varchar>,
             deleteAfter -> Nullable<Varchar>,
+            ckbAddress -> Nullable<Varchar>,
         }
     }
 

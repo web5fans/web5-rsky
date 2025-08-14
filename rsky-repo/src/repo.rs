@@ -14,6 +14,7 @@ use lexicon_cid::Cid;
 use rsky_common;
 use rsky_common::ipld::cid_for_cbor;
 use rsky_common::tid::{Ticker, TID};
+use rsky_lexicon::com::atproto::web5::SignedRoot;
 use secp256k1::Keypair;
 use serde_cbor::Value as CborValue;
 use std::collections::BTreeMap;
@@ -189,6 +190,102 @@ impl Repo {
     }
 
     // static
+    pub async fn format_pre_commit(
+        storage: Arc<RwLock<dyn RepoStorage>>,
+        did: String,
+        initial_writes: Option<Vec<RecordCreateOrUpdateOp>>,
+    ) -> Result<UnsignedCommit> {
+        let mut new_blocks = BlockMap::new();
+        let mut data = MST::create(storage, None, None).await?;
+        for record in initial_writes.unwrap_or(Vec::new()) {
+            let cid = new_blocks.add(record.record)?;
+            let data_key = util::format_data_key(record.collection, record.rkey);
+            data = data.add(&data_key, cid, None).await?;
+        }
+        let data_cid: Cid = data.get_pointer().await?;
+        let diff = DataDiff::of(&mut data, None).await?;
+        new_blocks.add_map(diff.new_mst_blocks)?;
+        let rev = Ticker::new().next(None);
+        Ok(UnsignedCommit {
+            did,
+            version: 3,
+            rev: rev.0.clone(),
+            prev: None, // added for backwards compatibility with v2
+            data: data_cid,
+        })
+    }
+
+    // static
+    pub async fn verify_init_commit(
+        storage: Arc<RwLock<dyn RepoStorage>>,
+        did: String,
+        root: SignedRoot,
+        signing_key: String,
+        initial_writes: Option<Vec<RecordCreateOrUpdateOp>>,
+    ) -> Result<CommitData> {
+        let mut new_blocks = BlockMap::new();
+        let mut data = MST::create(storage, None, None).await?;
+        for record in initial_writes.unwrap_or(Vec::new()) {
+            let cid = new_blocks.add(record.record)?;
+            let data_key = util::format_data_key(record.collection, record.rkey);
+            data = data.add(&data_key, cid, None).await?;
+        }
+        let data_cid: Cid = data.get_pointer().await?;
+        let diff = DataDiff::of(&mut data, None).await?;
+        new_blocks.add_map(diff.new_mst_blocks)?;
+
+        // verify commit content validity
+        if did != root.did {
+            bail!("root did invalid");
+        }
+        if root.version != 3 {
+            bail!("root version invalid");
+        }
+        if root.prev != None {
+            bail!("root prev invalid");
+        }
+        if data_cid.to_string() != root.data {
+            bail!("root data invalid");
+        }
+
+        let sig = if root.signed_bytes.starts_with("0x") || root.signed_bytes.starts_with("0X") {
+            &root.signed_bytes[2..]
+        } else {
+            &root.signed_bytes
+        };
+
+        let rev = TID::new(root.rev)?;
+        let commit = Commit {
+            did: root.did,
+            rev: rev.0.clone(),
+            version: root.version,
+            prev: None,
+            data: data_cid,
+            sig: hex::decode(sig).map_err(|error| {
+                let context = format!("root signed bytes invalid");
+                anyhow::Error::new(error).context(context)
+            })?,
+        };
+
+        // todo signing key check through did doc
+
+        if !util::verify_commit_sig(commit.clone(), &signing_key)? {
+            bail!("root sign data verified failed");
+        }
+
+        let commit_cid = new_blocks.add(commit)?;
+        Ok(CommitData {
+            cid: commit_cid,
+            rev: rev.0,
+            since: None,
+            prev: None,
+            new_blocks: new_blocks.clone(),
+            relevant_blocks: new_blocks,
+            removed_cids: diff.removed_cids,
+        })
+    }
+
+    // static
     pub async fn create_from_commit(
         storage: Arc<RwLock<dyn RepoStorage>>,
         commit: CommitData,
@@ -221,7 +318,7 @@ impl Repo {
             RecordWriteEnum::List(to_write) => to_write,
             RecordWriteEnum::Single(to_write) => vec![to_write],
         };
-        let mut leaves = BlockMap::new();
+        let mut leaves: BlockMap = BlockMap::new();
 
         let mut data = self.data.clone(); // @TODO: Confirm if this should be clone
         for write in writes.clone() {
@@ -295,6 +392,177 @@ impl Repo {
             relevant_blocks,
             removed_cids,
         })
+    }
+
+    pub async fn verify_commit(
+        &mut self,
+        to_write: RecordWriteEnum,
+        signing_key: String,
+        root: SignedRoot,
+    ) -> Result<CommitData> {
+        let writes = match to_write {
+            RecordWriteEnum::List(to_write) => to_write,
+            RecordWriteEnum::Single(to_write) => vec![to_write],
+        };
+        let mut leaves = BlockMap::new();
+
+        let mut data = self.data.clone(); // @TODO: Confirm if this should be clone
+        for write in writes.clone() {
+            match write {
+                RecordWriteOp::Create(write) => {
+                    let cid = leaves.add(write.record)?;
+                    let data_key = util::format_data_key(write.collection, write.rkey);
+                    data = data.add(&data_key, cid, None).await?;
+                }
+                RecordWriteOp::Update(write) => {
+                    let cid = leaves.add(write.record)?;
+                    let data_key = util::format_data_key(write.collection, write.rkey);
+                    data = data.update(&data_key, cid).await?;
+                }
+                RecordWriteOp::Delete(write) => {
+                    let data_key = util::format_data_key(write.collection, write.rkey);
+                    data = data.delete(&data_key).await?;
+                }
+            }
+        }
+
+        let data_cid = data.get_pointer().await?;
+        let diff = DataDiff::of(&mut data, Some(&mut self.data.clone())).await?;
+
+        let mut new_blocks = diff.new_mst_blocks;
+        let mut removed_cids = diff.removed_cids;
+
+        let mut relevant_blocks = BlockMap::new();
+        for op in writes {
+            data.add_blocks_for_path(
+                util::format_data_key(op.collection(), op.rkey()),
+                &mut relevant_blocks,
+            )
+            .await?;
+        }
+
+        let added_leaves = leaves.get_many(diff.new_leaf_cids.to_list())?;
+        if added_leaves.missing.len() > 0 {
+            bail!("Missing leaf blocks: {:?}", added_leaves.missing);
+        }
+        new_blocks.add_map(added_leaves.blocks.clone())?;
+        relevant_blocks.add_map(added_leaves.blocks)?;
+
+        // verify commit content validity
+        if self.did() != root.did {
+            bail!("root did invalid");
+        }
+        if root.version != 3 {
+            bail!("root version invalid");
+        }
+        if root.prev != None {
+            bail!("root prev invalid");
+        }
+        if data_cid.to_string() != root.data {
+            bail!("root data invalid");
+        }
+
+        let sig = if root.signed_bytes.starts_with("0x") || root.signed_bytes.starts_with("0X") {
+            &root.signed_bytes[2..]
+        } else {
+            &root.signed_bytes
+        };
+
+        let commit = Commit {
+            did: root.did,
+            rev: TID::new(root.rev)?.0,
+            version: root.version,
+            prev: None,
+            data: data_cid,
+            sig: hex::decode(sig).map_err(|error| {
+                let context = format!("root signed bytes invalid");
+                anyhow::Error::new(error).context(context)
+            })?,
+        };
+
+        // todo signing key check through did doc
+
+        if !util::verify_commit_sig(commit.clone(), &signing_key)? {
+            bail!("root sign data verified failed");
+        }
+
+        let commit_block_bytes = rsky_common::struct_to_cbor(&commit)?;
+        let commit_cid = cid_for_cbor(&commit)?;
+
+        if !commit_cid.eq(&self.cid) {
+            new_blocks.set(commit_cid, commit_block_bytes.clone());
+            relevant_blocks.set(commit_cid, commit_block_bytes.clone());
+            removed_cids.add(self.cid);
+        }
+
+        Ok(CommitData {
+            cid: commit_cid,
+            rev: commit.rev,
+            since: Some(self.commit.rev.clone()),
+            prev: Some(self.cid),
+            new_blocks,
+            relevant_blocks,
+            removed_cids,
+        })
+    }
+
+    pub async fn generate_commit(&mut self, to_write: RecordWriteEnum) -> Result<UnsignedCommit> {
+        let writes = match to_write {
+            RecordWriteEnum::List(to_write) => to_write,
+            RecordWriteEnum::Single(to_write) => vec![to_write],
+        };
+        let mut leaves = BlockMap::new();
+
+        let mut data = self.data.clone(); // @TODO: Confirm if this should be clone
+        for write in writes.clone() {
+            match write {
+                RecordWriteOp::Create(write) => {
+                    let cid = leaves.add(write.record)?;
+                    let data_key = util::format_data_key(write.collection, write.rkey);
+                    data = data.add(&data_key, cid, None).await?;
+                }
+                RecordWriteOp::Update(write) => {
+                    let cid = leaves.add(write.record)?;
+                    let data_key = util::format_data_key(write.collection, write.rkey);
+                    data = data.update(&data_key, cid).await?;
+                }
+                RecordWriteOp::Delete(write) => {
+                    let data_key = util::format_data_key(write.collection, write.rkey);
+                    data = data.delete(&data_key).await?;
+                }
+            }
+        }
+
+        let data_cid = data.get_pointer().await?;
+        let diff = DataDiff::of(&mut data, Some(&mut self.data.clone())).await?;
+
+        let mut new_blocks = diff.new_mst_blocks;
+
+        let mut relevant_blocks = BlockMap::new();
+        for op in writes {
+            data.add_blocks_for_path(
+                util::format_data_key(op.collection(), op.rkey()),
+                &mut relevant_blocks,
+            )
+            .await?;
+        }
+
+        let added_leaves = leaves.get_many(diff.new_leaf_cids.to_list())?;
+        if added_leaves.missing.len() > 0 {
+            bail!("Missing leaf blocks: {:?}", added_leaves.missing);
+        }
+        new_blocks.add_map(added_leaves.blocks.clone())?;
+        relevant_blocks.add_map(added_leaves.blocks)?;
+
+        let rev = Ticker::new().next(Some(TID(self.commit.rev.clone())));
+
+        return Ok(UnsignedCommit {
+            did: self.did(),
+            version: 3,
+            rev: rev.0.clone(),
+            prev: None, // added for backwards compatibility with v2
+            data: data_cid,
+        });
     }
 
     pub async fn apply_commit(&self, commit_data: CommitData) -> Result<Self> {

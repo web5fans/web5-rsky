@@ -7,9 +7,9 @@ use crate::auth_verifier;
 use crate::auth_verifier::OptionalAccessOrAdminToken;
 use crate::db::DbConn;
 use anyhow::Result;
-use aws_config::SdkConfig;
 use aws_sdk_s3::operation::get_object::GetObjectError;
 use aws_sdk_s3::primitives::AggregatedBytes;
+use aws_sdk_s3::Config;
 use lexicon_cid::Cid;
 use rocket::http::Header;
 use rocket::{Responder, State};
@@ -22,7 +22,7 @@ pub struct BlobResponder(Vec<u8>, Header<'static>, Header<'static>, Header<'stat
 async fn inner_get_blob(
     did: String,
     cid: String,
-    s3_config: &State<SdkConfig>,
+    s3_config: &State<Config>,
     auth: OptionalAccessOrAdminToken,
     db: DbConn,
     account_manager: AccountManager,
@@ -35,7 +35,7 @@ async fn inner_get_blob(
     let _ = assert_repo_availability(&did, is_user_or_admin, &account_manager).await?;
 
     let cid = Cid::from_str(&cid)?;
-    let actor_store = ActorStore::new(did.clone(), S3BlobStore::new(did.clone(), s3_config), db);
+    let actor_store = ActorStore::new(did.clone(), S3BlobStore::new(did.clone(), s3_config.inner().clone()), db);
 
     let found = actor_store.blob.get_blob(cid).await?;
     let buf: AggregatedBytes = found.stream.collect().await?;
@@ -49,7 +49,7 @@ async fn inner_get_blob(
 pub async fn get_blob(
     did: String,
     cid: String,
-    s3_config: &State<SdkConfig>,
+    s3_config: &State<Config>,
     auth: OptionalAccessOrAdminToken,
     db: DbConn,
     account_manager: AccountManager,

@@ -7,7 +7,7 @@ use crate::auth_verifier;
 use crate::auth_verifier::OptionalAccessOrAdminToken;
 use crate::db::DbConn;
 use anyhow::{bail, Result};
-use aws_config::SdkConfig;
+use aws_sdk_s3::Config;
 use lexicon_cid::Cid;
 use rocket::{Responder, State};
 use rsky_repo::storage::types::RepoStorage;
@@ -23,7 +23,7 @@ async fn inner_get_record(
     collection: String,
     rkey: String,
     commit: Option<String>,
-    s3_config: &State<SdkConfig>,
+    s3_config: &State<Config>,
     auth: OptionalAccessOrAdminToken,
     db: DbConn,
     account_manager: AccountManager,
@@ -34,7 +34,7 @@ async fn inner_get_record(
         false
     };
     let _ = assert_repo_availability(&did, is_user_or_admin, &account_manager).await?;
-    let actor_store = ActorStore::new(did.clone(), S3BlobStore::new(did.clone(), s3_config), db);
+    let actor_store = ActorStore::new(did.clone(), S3BlobStore::new(did.clone(), s3_config.inner().clone()), db);
     let storage_guard = actor_store.storage.read().await;
     let commit: Option<Cid> = match commit {
         Some(commit) => Some(Cid::from_str(&commit)?),
@@ -63,7 +63,7 @@ pub async fn get_record(
     collection: String,
     rkey: String,
     commit: Option<String>, // DEPRECATED: referenced a repo commit by CID, and retrieved record as of that commit
-    s3_config: &State<SdkConfig>,
+    s3_config: &State<Config>,
     auth: OptionalAccessOrAdminToken,
     db: DbConn,
     account_manager: AccountManager,

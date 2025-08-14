@@ -5,7 +5,7 @@ use crate::apis::ApiError;
 use crate::db::DbConn;
 use crate::SharedIdResolver;
 use anyhow::{bail, Result};
-use aws_config::SdkConfig;
+use aws_sdk_s3::Config;
 use rocket::serde::json::Json;
 use rocket::State;
 use rsky_identity::types::DidDocument;
@@ -15,7 +15,7 @@ use rsky_syntax::handle::INVALID_HANDLE;
 async fn inner_describe_repo(
     repo: String,
     id_resolver: &State<SharedIdResolver>,
-    s3_config: &State<SdkConfig>,
+    s3_config: &State<Config>,
     db: DbConn,
     account_manager: AccountManager,
 ) -> Result<DescribeRepoOutput> {
@@ -33,7 +33,7 @@ async fn inner_describe_repo(
 
             let mut actor_store = ActorStore::new(
                 account.did.clone(),
-                S3BlobStore::new(account.did.clone(), s3_config),
+                S3BlobStore::new(account.did.clone(), s3_config.inner().clone()),
                 db,
             );
             let collections = actor_store.record.list_collections().await?;
@@ -54,7 +54,7 @@ async fn inner_describe_repo(
 pub async fn describe_repo(
     repo: String,
     id_resolver: &State<SharedIdResolver>,
-    s3_config: &State<SdkConfig>,
+    s3_config: &State<Config>,
     db: DbConn,
     account_manager: AccountManager,
 ) -> Result<Json<DescribeRepoOutput>, ApiError> {

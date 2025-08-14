@@ -6,7 +6,7 @@ use crate::apis::ApiError;
 use crate::auth_verifier::AccessFull;
 use crate::db::DbConn;
 use anyhow::Result;
-use aws_config::SdkConfig;
+use aws_sdk_s3::Config;
 use futures::try_join;
 use rocket::serde::json::Json;
 use rocket::State;
@@ -14,7 +14,7 @@ use rsky_lexicon::com::atproto::server::CheckAccountStatusOutput;
 
 async fn inner_check_account_status(
     auth: AccessFull,
-    s3_config: &State<SdkConfig>,
+    s3_config: &State<Config>,
     db: DbConn,
     account_manager: AccountManager,
 ) -> Result<CheckAccountStatusOutput> {
@@ -22,7 +22,7 @@ async fn inner_check_account_status(
 
     let mut actor_store = ActorStore::new(
         requester.clone(),
-        S3BlobStore::new(requester.clone(), s3_config),
+        S3BlobStore::new(requester.clone(), s3_config.inner().clone()),
         db,
     );
     let repo_root = {
@@ -61,7 +61,7 @@ async fn inner_check_account_status(
 #[rocket::get("/xrpc/com.atproto.server.checkAccountStatus")]
 pub async fn check_account_status(
     auth: AccessFull,
-    s3_config: &State<SdkConfig>,
+    s3_config: &State<Config>,
     db: DbConn,
     account_manager: AccountManager,
 ) -> Result<Json<CheckAccountStatusOutput>, ApiError> {

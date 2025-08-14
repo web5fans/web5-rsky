@@ -34,7 +34,9 @@ image = "0.25.1"
 indexmap = { version = "1.9.3", features = ["serde-1"] }
 infer = "0.15.0"
 ipld-core = { workspace = true }
-jwt-simple = { version = "0.12.9", default-features = false, features = ["pure-rust"] }
+jwt-simple = { version = "0.12.9", default-features = false, features = [
+    "pure-rust",
+] }
 lazy_static = "1.4.0"
 lexicon_cid = { workspace = true }
 mailchecker = "6.0.1"
@@ -67,16 +69,20 @@ tracing = "0.1.41"
 tracing-subscriber = "0.3.19"
 url = "2.5.2"
 ws = { package = "rocket_ws", version = "0.1.1" }
-
+ckb-sdk = "4.1.0"
+molecule = { version = "0.9.1", default-features = false }
+ckb-types = "0.202"
+ckb-jsonrpc-types = "0.202"
 
 [dev-dependencies]
 testcontainers = "0.23.2"
-testcontainers-modules = { version = "0.11.6", features = ["postgres", "blocking"] }
-diesel_migrations = {version = "2.1.0", features = ["postgres"]}
+testcontainers-modules = { version = "0.11.6", features = [
+    "postgres",
+    "blocking",
+] }
+diesel_migrations = { version = "2.1.0", features = ["postgres"] }
 http-auth-basic = { version = "0.3.5" }
 
 [dependencies.rocket_sync_db_pools]
 version = "=0.1.0"
 features = ["diesel_postgres_pool"]
-
-

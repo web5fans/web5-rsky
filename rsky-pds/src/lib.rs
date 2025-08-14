@@ -223,10 +223,23 @@ pub async fn build_rocket(cfg: Option<RocketConfig>) -> Rocket<Build> {
     let mut background_sequencer = sequencer.sequencer.write().await.clone();
     tokio::spawn(async move { background_sequencer.start().await });
 
-    let aws_sdk_config = aws_config::from_env()
+    let credentials = aws_sdk_s3::config::Credentials::new(
+        env::var("AWS_ACCESS_KEY_ID").unwrap_or("test".to_owned()), // Access Key ID
+        env::var("AWS_SECRET_ACCESS_KEY").unwrap_or("test".to_owned()), // Secret Access Key
+        None,                                                       // Session Token
+        None,                                                       // Expires
+        "localstack",
+    );
+
+    let aws_config = aws_sdk_s3::config::Builder::new()
         .endpoint_url(env::var("AWS_ENDPOINT").unwrap_or("localhost".to_owned()))
-        .load()
-        .await;
+        .region(aws_config::Region::new(
+            env::var("AWS_DEFAULT_REGION").unwrap_or("us-east-1".to_owned()),
+        ))
+        .credentials_provider(credentials)
+        .behavior_version_latest()
+        .force_path_style(true)
+        .build();
 
     let id_resolver = SharedIdResolver {
         id_resolver: RwLock::new(IdResolver::new(IdentityResolverOpts {
@@ -351,6 +364,11 @@ pub async fn build_rocket(cfg: Option<RocketConfig>) -> Rocket<Build> {
                 com::atproto::sync::list_blobs::list_blobs,
                 com::atproto::sync::list_repos::list_repos,
                 com::atproto::sync::subscribe_repos::subscribe_repos,
+                com::atproto::web5::pre_direct_writes::pre_direct_writes,
+                com::atproto::web5::direct_writes::direct_writes,
+                com::atproto::web5::pre_create_account::pre_create_account,
+                com::atproto::web5::create_account::create_account,
+                com::atproto::web5::create_session::create_session,
                 app::bsky::actor::get_preferences::get_preferences,
                 app::bsky::actor::get_profile::get_profile,
                 app::bsky::actor::get_profiles::get_profiles,
@@ -372,7 +390,7 @@ pub async fn build_rocket(cfg: Option<RocketConfig>) -> Rocket<Build> {
         .attach(DbConn::fairing())
         .attach(shield)
         .manage(sequencer)
-        .manage(aws_sdk_config)
+        .manage(aws_config)
         .manage(id_resolver)
         .manage(cfg)
         .manage(local_viewer)

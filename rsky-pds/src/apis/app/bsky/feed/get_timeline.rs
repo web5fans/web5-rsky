@@ -9,7 +9,7 @@ use crate::read_after_write::viewer::LocalViewer;
 use crate::xrpc_server::types::HandlerPipeThrough;
 use crate::SharedLocalViewer;
 use anyhow::Result;
-use aws_config::SdkConfig;
+use aws_sdk_s3::Config;
 use rocket::State;
 use rsky_lexicon::app::bsky::feed::AuthorFeed;
 
@@ -21,7 +21,7 @@ pub async fn inner_get_timeline(
     _cursor: Option<String>,
     auth: AccessStandard,
     res: HandlerPipeThrough,
-    s3_config: &State<SdkConfig>,
+    s3_config: &State<Config>,
     state_local_viewer: &State<SharedLocalViewer>,
     db: DbConn,
     account_manager: AccountManager,
@@ -59,7 +59,7 @@ pub async fn get_timeline(
     cursor: Option<String>,
     auth: AccessStandard,
     res: HandlerPipeThrough,
-    s3_config: &State<SdkConfig>,
+    s3_config: &State<Config>,
     state_local_viewer: &State<SharedLocalViewer>,
     cfg: &State<ServerConfig>,
     db: DbConn,

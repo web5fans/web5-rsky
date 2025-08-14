@@ -7,14 +7,14 @@ use crate::auth_verifier;
 use crate::auth_verifier::OptionalAccessOrAdminToken;
 use crate::db::DbConn;
 use anyhow::{bail, Result};
-use aws_config::SdkConfig;
+use aws_sdk_s3::Config;
 use rocket::serde::json::Json;
 use rocket::State;
 use rsky_lexicon::com::atproto::sync::GetLatestCommitOutput;
 
 async fn inner_get_latest_commit(
     did: String,
-    s3_config: &State<SdkConfig>,
+    s3_config: &State<Config>,
     auth: OptionalAccessOrAdminToken,
     db: DbConn,
     account_manager: AccountManager,
@@ -26,7 +26,7 @@ async fn inner_get_latest_commit(
     };
     let _ = assert_repo_availability(&did, is_user_or_admin, &account_manager).await?;
 
-    let actor_store = ActorStore::new(did.clone(), S3BlobStore::new(did.clone(), s3_config), db);
+    let actor_store = ActorStore::new(did.clone(), S3BlobStore::new(did.clone(), s3_config.inner().clone()), db);
     let storage_guard = actor_store.storage.read().await;
     match storage_guard.get_root_detailed().await {
         Ok(res) => Ok(GetLatestCommitOutput {
@@ -41,7 +41,7 @@ async fn inner_get_latest_commit(
 #[rocket::get("/xrpc/com.atproto.sync.getLatestCommit?<did>")]
 pub async fn get_latest_commit(
     did: String,
-    s3_config: &State<SdkConfig>,
+    s3_config: &State<Config>,
     auth: OptionalAccessOrAdminToken,
     db: DbConn,
     account_manager: AccountManager,

@@ -13,12 +13,14 @@ use diesel::*;
 use futures::stream::{self, StreamExt};
 use lexicon_cid::Cid;
 use rsky_common;
+use rsky_lexicon::com::atproto::web5::{PreCreateAccountOutput, SignedRoot};
 use rsky_repo::repo::Repo;
 use rsky_repo::storage::readable_blockstore::ReadableBlockstore;
 use rsky_repo::storage::types::RepoStorage;
 use rsky_repo::types::{
     write_to_op, CommitAction, CommitData, CommitDataWithOps, CommitOp, PreparedCreateOrUpdate,
-    PreparedWrite, RecordCreateOrUpdateOp, RecordWriteEnum, RecordWriteOp, WriteOpAction,
+    PreparedWrite, RecordCreateOrUpdateOp, RecordWriteEnum, RecordWriteOp, UnsignedCommit,
+    WriteOpAction,
 };
 use rsky_repo::util::format_data_key;
 use rsky_syntax::aturi::AtUri;
@@ -130,7 +132,7 @@ impl ActorStore {
         let write_ops = writes
             .clone()
             .into_iter()
-            .map(|prepare| {
+            .map(|prepare: PreparedCreateOrUpdate| {
                 let at_uri: AtUri = prepare.uri.try_into()?;
                 Ok(RecordCreateOrUpdateOp {
                     action: WriteOpAction::Create,
@@ -144,6 +146,91 @@ impl ActorStore {
             self.storage.clone(),
             self.did.clone(),
             keypair,
+            Some(write_ops),
+        )
+        .await?;
+        let storage_guard = self.storage.read().await;
+        storage_guard.apply_commit(commit.clone(), None).await?;
+        let write_commit_ops = writes.iter().try_fold(
+            Vec::with_capacity(writes.len()),
+            |mut acc, w| -> Result<Vec<CommitOp>> {
+                let aturi: AtUri = w.uri.clone().try_into()?;
+                acc.push(CommitOp {
+                    action: CommitAction::Create,
+                    path: format_data_key(aturi.get_collection(), aturi.get_rkey()),
+                    cid: Some(w.cid.clone()),
+                    prev: None,
+                });
+                Ok(acc)
+            },
+        )?;
+        let writes = writes
+            .into_iter()
+            .map(PreparedWrite::Create)
+            .collect::<Vec<PreparedWrite>>();
+        self.blob.process_write_blobs(writes).await?;
+        Ok(CommitDataWithOps {
+            commit_data: commit,
+            ops: write_commit_ops,
+            prev_data: None,
+        })
+    }
+
+    pub async fn pre_create_repo(
+        &self,
+        writes: Vec<PreparedCreateOrUpdate>,
+    ) -> Result<PreCreateAccountOutput> {
+        let write_ops = writes
+            .clone()
+            .into_iter()
+            .map(|prepare: PreparedCreateOrUpdate| {
+                let at_uri: AtUri = prepare.uri.try_into()?;
+                Ok(RecordCreateOrUpdateOp {
+                    action: WriteOpAction::Create,
+                    collection: at_uri.get_collection(),
+                    rkey: at_uri.get_rkey(),
+                    record: prepare.record,
+                })
+            })
+            .collect::<Result<Vec<RecordCreateOrUpdateOp>>>()?;
+        let commit =
+            Repo::format_pre_commit(self.storage.clone(), self.did.clone(), Some(write_ops))
+                .await?;
+        let un_sign_bytes = hex::encode(serde_ipld_dagcbor::to_vec(&commit)?);
+        Ok(PreCreateAccountOutput {
+            did: commit.did,
+            rev: commit.rev,
+            data: commit.data.to_string(),
+            prev: commit.prev.map(|cid| cid.to_string()),
+            version: commit.version,
+            un_sign_bytes,
+        })
+    }
+
+    pub async fn web5_create_repo(
+        &self,
+        root: SignedRoot,
+        signing_key: String,
+        writes: Vec<PreparedCreateOrUpdate>,
+    ) -> Result<CommitDataWithOps> {
+        let write_ops = writes
+            .clone()
+            .into_iter()
+            .map(|prepare: PreparedCreateOrUpdate| {
+                let at_uri: AtUri = prepare.uri.try_into()?;
+                Ok(RecordCreateOrUpdateOp {
+                    action: WriteOpAction::Create,
+                    collection: at_uri.get_collection(),
+                    rkey: at_uri.get_rkey(),
+                    record: prepare.record,
+                })
+            })
+            .collect::<Result<Vec<RecordCreateOrUpdateOp>>>()?;
+        let commit = Repo::verify_init_commit(
+            self.storage.clone(),
+            self.did.clone(),
+            root,
+            signing_key,
             Some(write_ops),
         )
         .await?;
@@ -206,6 +293,7 @@ impl ActorStore {
         // but may not be necessary.
         // https://github.com/bluesky-social/atproto/pull/3585/files#diff-7627844a4a6b50190014e947d1331a96df3c64d4c5273fa0ce544f85c3c1265f
         let commit = self.format_commit(writes.clone(), swap_commit_cid).await?;
+        // }
         {
             let immutable_borrow = &self;
             // & send to indexing
@@ -215,6 +303,34 @@ impl ActorStore {
         }
         // persist the commit to repo storage
         let storage_guard = self.storage.read().await;
+        storage_guard
+            .apply_commit(commit.commit_data.clone(), None)
+            .await?;
+        // process blobs
+        self.blob.process_write_blobs(writes).await?;
+        Ok(commit)
+    }
+
+    pub async fn verify_writes(
+        &mut self,
+        writes: Vec<PreparedWrite>,
+        swap_commit_cid: Option<Cid>,
+        signing_key: String,
+        root: SignedRoot,
+    ) -> Result<CommitDataWithOps> {
+        let commit: CommitDataWithOps = self
+            .verify_commit(writes.clone(), swap_commit_cid, signing_key, root)
+            .await?;
+        // }
+        {
+            let immutable_borrow = &self;
+            // & send to indexing
+            immutable_borrow
+                .index_writes(writes.clone(), &commit.commit_data.rev)
+                .await?;
+        }
+        // persist the commit to repo storage
+        let storage_guard: tokio::sync::RwLockReadGuard<'_, SqlRepoReader> = self.storage.read().await;
         storage_guard
             .apply_commit(commit.commit_data.clone(), None)
             .await?;
@@ -373,6 +489,225 @@ impl ActorStore {
                 prev_data: Some(previous_data),
             };
             Ok(commit_with_data_ops)
+        } else {
+            Err(FormatCommitError::MissingRepoRoot(self.did.clone()).into())
+        }
+    }
+
+    pub async fn verify_commit(
+        &mut self,
+        writes: Vec<PreparedWrite>,
+        swap_commit: Option<Cid>,
+        signing_key: String,
+        root: SignedRoot,
+    ) -> Result<CommitDataWithOps> {
+        let current_root = {
+            let storage_guard = self.storage.read().await;
+            storage_guard.get_root_detailed().await
+        };
+        if let Ok(current_root) = current_root {
+            if let Some(swap_commit) = swap_commit {
+                if !current_root.cid.eq(&swap_commit) {
+                    return Err(
+                        FormatCommitError::BadCommitSwap(current_root.cid.to_string()).into(),
+                    );
+                }
+            }
+            {
+                let mut storage_guard = self.storage.write().await;
+                storage_guard.cache_rev(current_root.rev).await?;
+            }
+            let mut new_record_cids: Vec<Cid> = vec![];
+            let mut delete_and_update_uris = vec![];
+            let mut commit_ops = vec![];
+            for write in &writes {
+                let commit_action: CommitAction = write.action().into();
+                match write.clone() {
+                    PreparedWrite::Create(c) => new_record_cids.push(c.cid),
+                    PreparedWrite::Update(u) => {
+                        new_record_cids.push(u.cid);
+                        let u_at_uri: AtUri = u.uri.try_into()?;
+                        delete_and_update_uris.push(u_at_uri);
+                    }
+                    PreparedWrite::Delete(d) => {
+                        let d_at_uri: AtUri = d.uri.try_into()?;
+                        delete_and_update_uris.push(d_at_uri)
+                    }
+                }
+                if write.swap_cid().is_none() {
+                    continue;
+                }
+                let write_at_uri: &AtUri = &write.uri().try_into()?;
+                let record = self
+                    .record
+                    .get_record(write_at_uri, None, Some(true))
+                    .await?;
+                let current_record = match record {
+                    Some(record) => Some(Cid::from_str(&record.cid)?),
+                    None => None,
+                };
+                let cid = match &write {
+                    &PreparedWrite::Delete(_) => None,
+                    &PreparedWrite::Create(w) | &PreparedWrite::Update(w) => Some(w.cid),
+                };
+                let mut op = CommitOp {
+                    action: commit_action,
+                    path: format_data_key(write_at_uri.get_collection(), write_at_uri.get_rkey()),
+                    cid,
+                    prev: None,
+                };
+                if let Some(_) = current_record {
+                    op.prev = current_record;
+                };
+                commit_ops.push(op);
+                match write {
+                    // There should be no current record for a create
+                    PreparedWrite::Create(_) if write.swap_cid().is_some() => {
+                        Err::<(), anyhow::Error>(
+                            FormatCommitError::BadRecordSwap(format!("{:?}", current_record))
+                                .into(),
+                        )
+                    }
+                    // There should be a current record for an update
+                    PreparedWrite::Update(_) if write.swap_cid().is_none() => {
+                        Err::<(), anyhow::Error>(
+                            FormatCommitError::BadRecordSwap(format!("{:?}", current_record))
+                                .into(),
+                        )
+                    }
+                    // There should be a current record for a delete
+                    PreparedWrite::Delete(_) if write.swap_cid().is_none() => {
+                        Err::<(), anyhow::Error>(
+                            FormatCommitError::BadRecordSwap(format!("{:?}", current_record))
+                                .into(),
+                        )
+                    }
+                    _ => Ok::<(), anyhow::Error>(()),
+                }?;
+                match (current_record, write.swap_cid()) {
+                    (Some(current_record), Some(swap_cid)) if current_record.eq(swap_cid) => {
+                        Ok::<(), anyhow::Error>(())
+                    }
+                    _ => Err::<(), anyhow::Error>(
+                        FormatCommitError::RecordSwapMismatch(format!("{:?}", current_record))
+                            .into(),
+                    ),
+                }?;
+            }
+            let mut repo = Repo::load(self.storage.clone(), Some(current_root.cid)).await?;
+            let previous_data = repo.commit.data;
+            let write_ops: Vec<RecordWriteOp> = writes
+                .into_iter()
+                .map(write_to_op)
+                .collect::<Result<Vec<RecordWriteOp>>>()?;
+            let mut commit = repo
+                .verify_commit(RecordWriteEnum::List(write_ops), signing_key, root)
+                .await?;
+
+            // find blocks that would be deleted but are referenced by another record
+            let duplicate_record_cids = self
+                .get_duplicate_record_cids(commit.removed_cids.to_list(), delete_and_update_uris)
+                .await?;
+            for cid in duplicate_record_cids {
+                commit.removed_cids.delete(cid)
+            }
+
+            // find blocks that are relevant to ops but not included in diff
+            // (for instance a record that was moved but cid stayed the same)
+            let new_record_blocks = commit.relevant_blocks.get_many(new_record_cids)?;
+            if !new_record_blocks.missing.is_empty() {
+                let missing_blocks = {
+                    let storage_guard = self.storage.read().await;
+                    storage_guard.get_blocks(new_record_blocks.missing).await?
+                };
+                commit.relevant_blocks.add_map(missing_blocks.blocks)?;
+            }
+            let commit_with_data_ops = CommitDataWithOps {
+                ops: commit_ops,
+                commit_data: commit,
+                prev_data: Some(previous_data),
+            };
+            Ok(commit_with_data_ops)
+        } else {
+            Err(FormatCommitError::MissingRepoRoot(self.did.clone()).into())
+        }
+    }
+
+    pub async fn generate_commit(
+        &mut self,
+        writes: Vec<PreparedWrite>,
+        swap_commit: Option<Cid>,
+    ) -> Result<UnsignedCommit> {
+        let current_root = {
+            let storage_guard = self.storage.read().await;
+            storage_guard.get_root_detailed().await
+        };
+        if let Ok(current_root) = current_root {
+            if let Some(swap_commit) = swap_commit {
+                if !current_root.cid.eq(&swap_commit) {
+                    return Err(
+                        FormatCommitError::BadCommitSwap(current_root.cid.to_string()).into(),
+                    );
+                }
+            }
+            {
+                let mut storage_guard = self.storage.write().await;
+                storage_guard.cache_rev(current_root.rev).await?;
+            }
+            for write in &writes {
+                if write.swap_cid().is_none() {
+                    continue;
+                }
+                let write_at_uri: &AtUri = &write.uri().try_into()?;
+                let record = self
+                    .record
+                    .get_record(write_at_uri, None, Some(true))
+                    .await?;
+                let current_record = match record {
+                    Some(record) => Some(Cid::from_str(&record.cid)?),
+                    None => None,
+                };
+                match write {
+                    // There should be no current record for a create
+                    PreparedWrite::Create(_) if write.swap_cid().is_some() => {
+                        Err::<(), anyhow::Error>(
+                            FormatCommitError::BadRecordSwap(format!("{:?}", current_record))
+                                .into(),
+                        )
+                    }
+                    // There should be a current record for an update
+                    PreparedWrite::Update(_) if write.swap_cid().is_none() => {
+                        Err::<(), anyhow::Error>(
+                            FormatCommitError::BadRecordSwap(format!("{:?}", current_record))
+                                .into(),
+                        )
+                    }
+                    // There should be a current record for a delete
+                    PreparedWrite::Delete(_) if write.swap_cid().is_none() => {
+                        Err::<(), anyhow::Error>(
+                            FormatCommitError::BadRecordSwap(format!("{:?}", current_record))
+                                .into(),
+                        )
+                    }
+                    _ => Ok::<(), anyhow::Error>(()),
+                }?;
+                match (current_record, write.swap_cid()) {
+                    (Some(current_record), Some(swap_cid)) if current_record.eq(swap_cid) => {
+                        Ok::<(), anyhow::Error>(())
+                    }
+                    _ => Err::<(), anyhow::Error>(
+                        FormatCommitError::RecordSwapMismatch(format!("{:?}", current_record))
+                            .into(),
+                    ),
+                }?;
+            }
+            let mut repo = Repo::load(self.storage.clone(), Some(current_root.cid)).await?;
+            let write_ops: Vec<RecordWriteOp> = writes
+                .into_iter()
+                .map(write_to_op)
+                .collect::<Result<Vec<RecordWriteOp>>>()?;
+
+            repo.generate_commit(RecordWriteEnum::List(write_ops)).await
         } else {
             Err(FormatCommitError::MissingRepoRoot(self.did.clone()).into())
         }

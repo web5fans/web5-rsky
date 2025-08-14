@@ -13,7 +13,7 @@ use crate::plc::types::{OpOrTombstone, Operation};
 use crate::sequencer::events::sync_evt_data_from_commit;
 use crate::SharedSequencer;
 use crate::{plc, SharedIdResolver};
-use aws_config::SdkConfig;
+use aws_sdk_s3::Config;
 use email_address::*;
 use rocket::serde::json::Json;
 use rocket::State;
@@ -46,7 +46,7 @@ pub async fn server_create_account(
     body: Json<CreateAccountInput>,
     auth: UserDidAuthOptional,
     sequencer: &State<SharedSequencer>,
-    s3_config: &State<SdkConfig>,
+    s3_config: &State<Config>,
     cfg: &State<ServerConfig>,
     id_resolver: &State<SharedIdResolver>,
     account_manager: AccountManager,
@@ -77,8 +77,11 @@ pub async fn server_create_account(
     .await?;
 
     // Create new actor repo TODO: Proper rollback
-    let mut actor_store =
-        ActorStore::new(did.clone(), S3BlobStore::new(did.clone(), s3_config), db);
+    let mut actor_store = ActorStore::new(
+        did.clone(),
+        S3BlobStore::new(did.clone(), s3_config.inner().clone()),
+        db,
+    );
     let commit = match actor_store.create_repo(signing_key, Vec::new()).await {
         Ok(commit) => commit,
         Err(error) => {
@@ -131,6 +134,7 @@ pub async fn server_create_account(
             repo_rev: commit.commit_data.rev.clone(),
             invite_code,
             deactivated: Some(deactivated),
+            ckb_addr: None,
         })
         .await
     {

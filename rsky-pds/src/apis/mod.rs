@@ -110,6 +110,8 @@ pub enum ApiError {
     BlobNotFound,
     BadRequest(String, String),
     AuthRequiredError(String),
+    InvalidCkbError(String),
+    InvalidS3Error(String),
 }
 
 #[derive(Serialize)]
@@ -431,6 +433,36 @@ impl<'r, 'o: 'r> ::rocket::response::Responder<'r, 'o> for ApiError {
                     &[],
                 )));
                 res.set_status(Status { code: 404u16 });
+                Ok(res)
+            }
+            ApiError::InvalidCkbError(message) => {
+                let body = Json(ErrorBody {
+                    error: "InvalidCkbAddr".to_string(),
+                    message,
+                });
+                let mut res =
+                    <Json<ErrorBody> as ::rocket::response::Responder>::respond_to(body, __req)?;
+                res.set_header(ContentType(rocket::http::MediaType::const_new(
+                    "application",
+                    "json",
+                    &[],
+                )));
+                res.set_status(Status { code: 400u16 });
+                Ok(res)
+            }
+            ApiError::InvalidS3Error(message) => {
+                let body = Json(ErrorBody {
+                    error: "InvalidS3Error".to_string(),
+                    message,
+                });
+                let mut res =
+                    <Json<ErrorBody> as ::rocket::response::Responder>::respond_to(body, __req)?;
+                res.set_header(ContentType(rocket::http::MediaType::const_new(
+                    "application",
+                    "json",
+                    &[],
+                )));
+                res.set_status(Status { code: 400u16 });
                 Ok(res)
             }
         }

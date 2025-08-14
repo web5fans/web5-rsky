@@ -8,7 +8,7 @@ import requests
 BASE_URL = "https://plc.directory/export"
 COUNT_PER_REQUEST = 1000
 SLEEP_SECONDS = 0.5
-DB_FILE = "plc_directory.db"
+DB_FILE = "target/install/sqlite-data/plc_directory.db"
 
 
 def create_database():

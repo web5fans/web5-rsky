@@ -4,14 +4,14 @@ use crate::apis::ApiError;
 use crate::auth_verifier::AccessStandard;
 use crate::db::DbConn;
 use anyhow::Result;
-use aws_config::SdkConfig;
+use aws_sdk_s3::Config;
 use rocket::serde::json::Json;
 use rocket::State;
 use rsky_lexicon::app::bsky::actor::PutPreferencesInput;
 
 async fn inner_put_preferences(
     body: Json<PutPreferencesInput>,
-    s3_config: &State<SdkConfig>,
+    s3_config: &State<Config>,
     auth: AccessStandard,
     db: DbConn,
 ) -> Result<(), ApiError> {
@@ -20,7 +20,7 @@ async fn inner_put_preferences(
     let requester = auth.did.unwrap().clone();
     let actor_store = ActorStore::new(
         requester.clone(),
-        S3BlobStore::new(requester.clone(), s3_config),
+        S3BlobStore::new(requester.clone(), s3_config.inner().clone()),
         db,
     );
     actor_store
@@ -38,7 +38,7 @@ async fn inner_put_preferences(
 )]
 pub async fn put_preferences(
     body: Json<PutPreferencesInput>,
-    s3_config: &State<SdkConfig>,
+    s3_config: &State<Config>,
     auth: AccessStandard,
     db: DbConn,
 ) -> Result<(), ApiError> {

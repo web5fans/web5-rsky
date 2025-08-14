@@ -5,7 +5,7 @@ use crate::apis::ApiError;
 use crate::auth_verifier::Moderator;
 use crate::db::DbConn;
 use anyhow::{bail, Result};
-use aws_config::SdkConfig;
+use aws_sdk_s3::Config;
 use futures::try_join;
 use lexicon_cid::Cid;
 use rocket::serde::json::Json;
@@ -18,7 +18,7 @@ async fn inner_get_subject_status(
     did: Option<String>,
     uri: Option<String>,
     blob: Option<String>,
-    s3_config: &State<SdkConfig>,
+    s3_config: &State<Config>,
     db: DbConn,
     account_manager: AccountManager,
 ) -> Result<SubjectStatus> {
@@ -27,8 +27,11 @@ async fn inner_get_subject_status(
         match did {
             None => bail!("Must provide a did to request blob state"),
             Some(did) => {
-                let actor_store =
-                    ActorStore::new(did.clone(), S3BlobStore::new(did.clone(), s3_config), db);
+                let actor_store = ActorStore::new(
+                    did.clone(),
+                    S3BlobStore::new(did.clone(), s3_config.inner().clone()),
+                    db,
+                );
 
                 let takedown = actor_store
                     .blob
@@ -54,7 +57,7 @@ async fn inner_get_subject_status(
         {
             let actor_store = ActorStore::new(
                 uri_hostname.to_string(),
-                S3BlobStore::new(uri_hostname.to_string(), s3_config),
+                S3BlobStore::new(uri_hostname.to_string(), s3_config.inner().clone()),
                 db,
             );
             let (takedown, cid) = try_join!(
@@ -96,7 +99,7 @@ pub async fn get_subject_status(
     did: Option<String>,
     uri: Option<String>,
     blob: Option<String>,
-    s3_config: &State<SdkConfig>,
+    s3_config: &State<Config>,
     db: DbConn,
     _auth: Moderator,
     account_manager: AccountManager,

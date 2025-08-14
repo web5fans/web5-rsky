@@ -7,7 +7,7 @@ use crate::auth_verifier;
 use crate::auth_verifier::OptionalAccessOrAdminToken;
 use crate::db::DbConn;
 use anyhow::{bail, Result};
-use aws_config::SdkConfig;
+use aws_sdk_s3::Config;
 use rocket::{Responder, State};
 
 #[derive(Responder)]
@@ -15,12 +15,12 @@ use rocket::{Responder, State};
 pub struct BlockResponder(Vec<u8>);
 
 async fn get_car_stream(
-    s3_config: &State<SdkConfig>,
+    s3_config: &State<Config>,
     did: String,
     since: Option<String>,
     db: DbConn,
 ) -> Result<Vec<u8>> {
-    let actor_store = ActorStore::new(did.clone(), S3BlobStore::new(did.clone(), s3_config), db);
+    let actor_store = ActorStore::new(did.clone(), S3BlobStore::new(did.clone(), s3_config.inner().clone()), db);
     let storage_guard = actor_store.storage.read().await;
     match storage_guard.get_car_stream(since).await {
         Err(_) => bail!("Could not find repo for DID: {did}"),
@@ -31,7 +31,7 @@ async fn get_car_stream(
 async fn inner_get_repo(
     did: String,
     since: Option<String>, // The revision ('rev') of the repo to create a diff from.
-    s3_config: &State<SdkConfig>,
+    s3_config: &State<Config>,
     auth: OptionalAccessOrAdminToken,
     db: DbConn,
     account_manager: AccountManager,
@@ -52,7 +52,7 @@ async fn inner_get_repo(
 pub async fn get_repo(
     did: String,
     since: Option<String>, // The revision ('rev') of the repo to create a diff from.
-    s3_config: &State<SdkConfig>,
+    s3_config: &State<Config>,
     auth: OptionalAccessOrAdminToken,
     db: DbConn,
     account_manager: AccountManager,

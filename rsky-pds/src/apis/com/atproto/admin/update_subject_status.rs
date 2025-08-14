@@ -6,7 +6,7 @@ use crate::auth_verifier::Moderator;
 use crate::db::DbConn;
 use crate::SharedSequencer;
 use anyhow::Result;
-use aws_config::SdkConfig;
+use aws_sdk_s3::Config;
 use lexicon_cid::Cid;
 use rocket::serde::json::Json;
 use rocket::State;
@@ -17,7 +17,7 @@ use std::str::FromStr;
 async fn inner_update_subject_status(
     body: Json<SubjectStatus>,
     sequencer: &State<SharedSequencer>,
-    s3_config: &State<SdkConfig>,
+    s3_config: &State<Config>,
     db: DbConn,
     account_manager: AccountManager,
 ) -> Result<UpdateSubjectStatusOutput> {
@@ -38,7 +38,7 @@ async fn inner_update_subject_status(
                 let subject_at_uri: AtUri = subject.uri.clone().try_into()?;
                 let actor_store = ActorStore::new(
                     subject_at_uri.get_hostname().to_string(),
-                    S3BlobStore::new(subject_at_uri.get_hostname().to_string(), s3_config),
+                    S3BlobStore::new(subject_at_uri.get_hostname().to_string(), s3_config.inner().clone()),
                     db,
                 );
                 actor_store
@@ -49,7 +49,7 @@ async fn inner_update_subject_status(
             Subject::RepoBlobRef(subject) => {
                 let actor_store = ActorStore::new(
                     subject.did.clone(),
-                    S3BlobStore::new(subject.did.clone(), s3_config),
+                    S3BlobStore::new(subject.did.clone(), s3_config.inner().clone()),
                     db,
                 );
                 actor_store
@@ -91,7 +91,7 @@ async fn inner_update_subject_status(
 pub async fn update_subject_status(
     body: Json<SubjectStatus>,
     sequencer: &State<SharedSequencer>,
-    s3_config: &State<SdkConfig>,
+    s3_config: &State<Config>,
     db: DbConn,
     _auth: Moderator,
     account_manager: AccountManager,

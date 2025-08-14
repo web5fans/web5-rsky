@@ -8,7 +8,7 @@ use crate::db::DbConn;
 use crate::repo::prepare::{prepare_create, prepare_update, PrepareCreateOpts, PrepareUpdateOpts};
 use crate::SharedSequencer;
 use anyhow::{bail, Result};
-use aws_config::SdkConfig;
+use aws_sdk_s3::Config;
 use lexicon_cid::Cid;
 use rocket::serde::json::Json;
 use rocket::State;
@@ -22,7 +22,7 @@ async fn inner_put_record(
     body: Json<PutRecordInput>,
     auth: AccessStandardIncludeChecks,
     sequencer: &State<SharedSequencer>,
-    s3_config: &State<SdkConfig>,
+    s3_config: &State<Config>,
     db: DbConn,
     account_manager: AccountManager,
 ) -> Result<PutRecordOutput> {
@@ -63,7 +63,7 @@ async fn inner_put_record(
         };
         let (commit, write): (Option<CommitDataWithOps>, PreparedWrite) = {
             let mut actor_store =
-                ActorStore::new(did.clone(), S3BlobStore::new(did.clone(), s3_config), db);
+                ActorStore::new(did.clone(), S3BlobStore::new(did.clone(), s3_config.inner().clone()), db);
 
             let current = actor_store
                 .record
@@ -129,7 +129,7 @@ pub async fn put_record(
     body: Json<PutRecordInput>,
     auth: AccessStandardIncludeChecks,
     sequencer: &State<SharedSequencer>,
-    s3_config: &State<SdkConfig>,
+    s3_config: &State<Config>,
     db: DbConn,
     account_manager: AccountManager,
 ) -> Result<Json<PutRecordOutput>, ApiError> {

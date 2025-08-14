@@ -8,7 +8,7 @@ use crate::read_after_write::viewer::{get_records_since_rev, LocalViewer};
 use crate::xrpc_server::types::HandlerPipeThrough;
 use crate::SharedLocalViewer;
 use anyhow::Result;
-use aws_config::SdkConfig;
+use aws_sdk_s3::Config;
 use chrono::offset::Utc as UtcOffset;
 use chrono::DateTime;
 use rocket::http::Status;
@@ -111,7 +111,7 @@ pub async fn handle_read_after_write<T: DeserializeOwned + serde::Serialize>(
     requester: String,
     res: HandlerPipeThrough,
     munge: MungeFn<T>,
-    s3_config: &State<SdkConfig>,
+    s3_config: &State<Config>,
     state_local_viewer: &State<SharedLocalViewer>,
     db: DbConn,
     account_manager: AccountManager,
@@ -145,7 +145,7 @@ pub async fn read_after_write_internal<T: DeserializeOwned + serde::Serialize>(
     requester: String,
     res: HandlerPipeThrough,
     munge: MungeFn<T>,
-    s3_config: &State<SdkConfig>,
+    s3_config: &State<Config>,
     state_local_viewer: &State<SharedLocalViewer>,
     db: DbConn,
     account_manager: AccountManager,
@@ -157,7 +157,7 @@ pub async fn read_after_write_internal<T: DeserializeOwned + serde::Serialize>(
         Some(rev) => {
             let actor_store = ActorStore::new(
                 requester.clone(),
-                S3BlobStore::new(requester.clone(), s3_config),
+                S3BlobStore::new(requester.clone(), s3_config.inner().clone()),
                 db,
             );
             let local = get_records_since_rev(&actor_store, rev).await?;

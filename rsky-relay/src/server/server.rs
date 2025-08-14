@@ -127,7 +127,7 @@ impl Server {
 
         let listener = TcpListener::bind(format!("127.0.0.1:{PORT}"))?;
         listener.set_nonblocking(true)?;
-        let base_url = Url::parse("http://example.com")?;
+        let base_url = Url::parse("http://127.0.0.1:8000")?;
         let now = Instant::now();
         let last = now.checked_sub(HOSTS_INTERVAL).unwrap_or(now);
         #[cfg(feature = "labeler")]

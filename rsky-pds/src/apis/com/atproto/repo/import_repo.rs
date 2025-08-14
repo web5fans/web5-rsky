@@ -7,7 +7,7 @@ use crate::repo::prepare::{
     prepare_create, prepare_delete, prepare_update, PrepareCreateOpts, PrepareDeleteOpts,
     PrepareUpdateOpts,
 };
-use aws_config::SdkConfig;
+use aws_sdk_s3::Config;
 use futures::{stream, StreamExt};
 use lexicon_cid::Cid;
 use reqwest::header;
@@ -77,13 +77,13 @@ impl<'r> FromData<'r> for ImportRepoInput {
 pub async fn import_repo(
     auth: AccessFullImport,
     import_repo_input: ImportRepoInput,
-    s3_config: &State<SdkConfig>,
+    s3_config: &State<Config>,
     db: DbConn,
 ) -> Result<(), ApiError> {
     let requester = auth.access.credentials.unwrap().did.unwrap();
     let mut actor_store = ActorStore::new(
         requester.clone(),
-        S3BlobStore::new(requester.clone(), s3_config),
+        S3BlobStore::new(requester.clone(), s3_config.inner().clone()),
         db,
     );
 

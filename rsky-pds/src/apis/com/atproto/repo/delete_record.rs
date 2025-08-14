@@ -8,7 +8,7 @@ use crate::db::DbConn;
 use crate::repo::prepare::{prepare_delete, PrepareDeleteOpts};
 use crate::SharedSequencer;
 use anyhow::{bail, Result};
-use aws_config::SdkConfig;
+use aws_sdk_s3::Config;
 use lexicon_cid::Cid;
 use rocket::serde::json::Json;
 use rocket::State;
@@ -21,7 +21,7 @@ async fn inner_delete_record(
     body: Json<DeleteRecordInput>,
     auth: AccessStandardIncludeChecks,
     sequencer: &State<SharedSequencer>,
-    s3_config: &State<SdkConfig>,
+    s3_config: &State<Config>,
     db: DbConn,
     account_manager: AccountManager,
 ) -> Result<()> {
@@ -66,7 +66,7 @@ async fn inner_delete_record(
                 swap_cid: swap_record_cid,
             })?;
             let mut actor_store =
-                ActorStore::new(did.clone(), S3BlobStore::new(did.clone(), s3_config), db);
+                ActorStore::new(did.clone(), S3BlobStore::new(did.clone(), s3_config.inner().clone()), db);
             let write_at_uri: AtUri = write.uri.clone().try_into()?;
             let record = actor_store
                 .record
@@ -102,7 +102,7 @@ pub async fn delete_record(
     body: Json<DeleteRecordInput>,
     auth: AccessStandardIncludeChecks,
     sequencer: &State<SharedSequencer>,
-    s3_config: &State<SdkConfig>,
+    s3_config: &State<Config>,
     db: DbConn,
     account_manager: AccountManager,
 ) -> Result<(), ApiError> {

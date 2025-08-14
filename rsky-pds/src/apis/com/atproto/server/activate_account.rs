@@ -7,7 +7,7 @@ use crate::apis::ApiError;
 use crate::auth_verifier::AccessFull;
 use crate::db::DbConn;
 use crate::SharedSequencer;
-use aws_config::SdkConfig;
+use aws_sdk_s3::Config;
 use rocket::State;
 use rsky_syntax::handle::INVALID_HANDLE;
 
@@ -15,7 +15,7 @@ use rsky_syntax::handle::INVALID_HANDLE;
 async fn inner_activate_account(
     auth: AccessFull,
     sequencer: &State<SharedSequencer>,
-    s3_config: &State<SdkConfig>,
+    s3_config: &State<Config>,
     db: DbConn,
     account_manager: AccountManager,
 ) -> Result<(), ApiError> {
@@ -37,7 +37,7 @@ async fn inner_activate_account(
 
         let mut actor_store = ActorStore::new(
             requester.clone(),
-            S3BlobStore::new(requester.clone(), s3_config),
+            S3BlobStore::new(requester.clone(), s3_config.inner().clone()),
             db,
         );
         let sync_data = actor_store.get_sync_event_data().await?;
@@ -63,7 +63,7 @@ async fn inner_activate_account(
 pub async fn activate_account(
     auth: AccessFull,
     sequencer: &State<SharedSequencer>,
-    s3_config: &State<SdkConfig>,
+    s3_config: &State<Config>,
     db: DbConn,
     account_manager: AccountManager,
 ) -> Result<(), ApiError> {

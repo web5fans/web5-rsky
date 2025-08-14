@@ -4,7 +4,7 @@ use crate::actor_store::ActorStore;
 use crate::apis::ApiError;
 use crate::db::DbConn;
 use anyhow::{bail, Result};
-use aws_config::SdkConfig;
+use aws_sdk_s3::Config;
 use rocket::serde::json::Json;
 use rocket::State;
 use rsky_lexicon::com::atproto::repo::{ListRecordsOutput, Record};
@@ -25,7 +25,7 @@ async fn inner_list_records(
     rkeyEnd: Option<String>,
     // Flag to reverse the order of the returned records.
     reverse: bool,
-    s3_config: &State<SdkConfig>,
+    s3_config: &State<Config>,
     db: DbConn,
     account_manager: AccountManager,
 ) -> Result<ListRecordsOutput> {
@@ -35,7 +35,7 @@ async fn inner_list_records(
     let did = account_manager.get_did_for_actor(&repo, None).await?;
     if let Some(did) = did {
         let mut actor_store =
-            ActorStore::new(did.clone(), S3BlobStore::new(did.clone(), s3_config), db);
+            ActorStore::new(did.clone(), S3BlobStore::new(did.clone(), s3_config.inner().clone()), db);
 
         let records: Vec<Record> = actor_store
             .record
@@ -90,7 +90,7 @@ pub async fn list_records(
     rkeyEnd: Option<String>,
     // Flag to reverse the order of the returned records.
     reverse: Option<bool>,
-    s3_config: &State<SdkConfig>,
+    s3_config: &State<Config>,
     db: DbConn,
     account_manager: AccountManager,
 ) -> Result<Json<ListRecordsOutput>, ApiError> {

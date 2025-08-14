@@ -8,7 +8,7 @@ use crate::auth_verifier;
 use crate::auth_verifier::OptionalAccessOrAdminToken;
 use crate::db::DbConn;
 use anyhow::Result;
-use aws_config::SdkConfig;
+use aws_sdk_s3::Config;
 use rocket::serde::json::Json;
 use rocket::State;
 use rsky_lexicon::com::atproto::sync::ListBlobsOutput;
@@ -18,7 +18,7 @@ async fn inner_list_blobs(
     since: Option<String>, // Optional revision of the repo to list blobs since.
     limit: Option<u16>,
     cursor: Option<String>,
-    s3_config: &State<SdkConfig>,
+    s3_config: &State<Config>,
     auth: OptionalAccessOrAdminToken,
     db: DbConn,
     account_manager: AccountManager,
@@ -30,7 +30,7 @@ async fn inner_list_blobs(
     };
     let _ = assert_repo_availability(&did, is_user_or_admin, &account_manager).await?;
 
-    let actor_store = ActorStore::new(did.clone(), S3BlobStore::new(did.clone(), s3_config), db);
+    let actor_store = ActorStore::new(did.clone(), S3BlobStore::new(did.clone(), s3_config.inner().clone()), db);
     let blob_cids = actor_store
         .blob
         .list_blobs(ListBlobsOpts {
@@ -59,7 +59,7 @@ pub async fn list_blobs(
     since: Option<String>, // Optional revision of the repo to list blobs since.
     limit: Option<u16>,
     cursor: Option<String>,
-    s3_config: &State<SdkConfig>,
+    s3_config: &State<Config>,
     auth: OptionalAccessOrAdminToken,
     db: DbConn,
     account_manager: AccountManager,

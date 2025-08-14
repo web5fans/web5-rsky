@@ -3,8 +3,8 @@ use crate::actor_store::ActorStore;
 use crate::apis::ApiError;
 use crate::auth_verifier::AccessStandardIncludeChecks;
 use crate::db::DbConn;
-use anyhow::Result;
-use aws_config::SdkConfig;
+use anyhow::{Result, Error};
+use aws_sdk_s3::Config;
 use rocket::data::Data;
 use rocket::http::Status;
 use rocket::request::{FromRequest, Outcome};
@@ -41,16 +41,31 @@ async fn inner_upload_blob(
     auth: AccessStandardIncludeChecks,
     blob: Data<'_>,
     content_type: ContentType,
-    s3_config: &State<SdkConfig>,
+    s3_config: &State<Config>,
     db: DbConn,
 ) -> Result<BlobOutput> {
     let requester = auth.access.credentials.unwrap().did.unwrap();
 
     let actor_store = ActorStore::new(
         requester.clone(),
-        S3BlobStore::new(requester.clone(), s3_config),
+        S3BlobStore::new(requester.clone(), s3_config.inner().clone()),
         db,
     );
+
+    if !actor_store
+        .blob
+        .blobstore
+        .bucket_exists()
+        .await
+        .map_err(|e| Error::msg(format!("{:?}", e)))?
+    {
+        actor_store
+            .blob
+            .blobstore
+            .create_bucket()
+            .await
+            .map_err(|e| Error::msg(format!("{:?}", e)))?;
+    }
 
     let metadata = actor_store
         .blob
@@ -96,7 +111,7 @@ pub async fn upload_blob(
     auth: AccessStandardIncludeChecks,
     blob: Data<'_>,
     content_type: ContentType,
-    s3_config: &State<SdkConfig>,
+    s3_config: &State<Config>,
     db: DbConn,
 ) -> Result<Json<BlobOutput>, ApiError> {
     match inner_upload_blob(auth, blob, content_type, s3_config, db).await {

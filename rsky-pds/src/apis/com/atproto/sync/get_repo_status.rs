@@ -8,14 +8,14 @@ use crate::apis::com::atproto::repo::assert_repo_availability;
 use crate::apis::ApiError;
 use crate::db::DbConn;
 use anyhow::Result;
-use aws_config::SdkConfig;
+use aws_sdk_s3::Config;
 use rocket::serde::json::Json;
 use rocket::State;
 use rsky_lexicon::com::atproto::sync::{GetRepoStatusOutput, RepoStatus};
 
 async fn inner_get_repo(
     did: String,
-    s3_config: &State<SdkConfig>,
+    s3_config: &State<Config>,
     db: DbConn,
     account_manager: AccountManager,
 ) -> Result<GetRepoStatusOutput> {
@@ -25,7 +25,7 @@ async fn inner_get_repo(
     let mut rev: Option<String> = None;
     if active {
         let actor_store =
-            ActorStore::new(did.clone(), S3BlobStore::new(did.clone(), s3_config), db);
+            ActorStore::new(did.clone(), S3BlobStore::new(did.clone(), s3_config.inner().clone()), db);
         let storage_guard = actor_store.storage.read().await;
         let root = storage_guard.get_root_detailed().await?;
         rev = Some(root.rev);
@@ -56,7 +56,7 @@ async fn inner_get_repo(
 #[rocket::get("/xrpc/com.atproto.sync.getRepoStatus?<did>")]
 pub async fn get_repo_status(
     did: String,
-    s3_config: &State<SdkConfig>,
+    s3_config: &State<Config>,
     db: DbConn,
     account_manager: AccountManager,
 ) -> Result<Json<GetRepoStatusOutput>, ApiError> {

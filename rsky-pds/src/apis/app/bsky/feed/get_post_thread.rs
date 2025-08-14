@@ -21,7 +21,7 @@ use atrium_api::app::bsky::feed::get_post_thread::{
 use atrium_api::client::AtpServiceClient;
 use atrium_api::types::LimitedU16;
 use atrium_xrpc_client::reqwest::ReqwestClientBuilder;
-use aws_config::SdkConfig;
+use aws_sdk_s3::Config;
 use futures::stream::{self, StreamExt};
 use ipld_core::ipld::Ipld as AtriumIpld;
 use reqwest::header::HeaderMap;
@@ -50,7 +50,7 @@ pub async fn inner_get_post_thread(
     parentHeight: u16,
     auth: AccessStandard,
     res: Result<HandlerPipeThrough>,
-    s3_config: &State<SdkConfig>,
+    s3_config: &State<Config>,
     state_local_viewer: &State<SharedLocalViewer>,
     cfg: &State<ServerConfig>,
     db: DbConn,
@@ -88,7 +88,7 @@ pub async fn inner_get_post_thread(
                         Some(error) if error == "NotFound" => {
                             let actor_store = ActorStore::new(
                                 requester.clone(),
-                                S3BlobStore::new(requester.clone(), s3_config),
+                                S3BlobStore::new(requester.clone(), s3_config.inner().clone()),
                                 db,
                             );
                             let local_viewer_lock = state_local_viewer.local_viewer.read().await;
@@ -132,7 +132,7 @@ pub async fn get_post_thread(
     parentHeight: Option<u16>, // How many levels of parent (and grandparent, etc.) post to include.
     auth: AccessStandard,
     res: Result<HandlerPipeThrough>,
-    s3_config: &State<SdkConfig>,
+    s3_config: &State<Config>,
     state_local_viewer: &State<SharedLocalViewer>,
     cfg: &State<ServerConfig>,
     db: DbConn,

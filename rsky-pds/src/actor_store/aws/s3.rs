@@ -1,11 +1,12 @@
 use std::str::FromStr;
 // based on https://github.com/bluesky-social/atproto/blob/main/packages/aws/src/s3.ts
+use crate::apis::ApiError;
 use anyhow::Result;
-use aws_config::SdkConfig;
 use aws_sdk_s3 as s3;
 use aws_sdk_s3::error::SdkError;
 use aws_sdk_s3::primitives::ByteStream;
 use aws_sdk_s3::types::{Delete, ObjectCannedAcl, ObjectIdentifier};
+use aws_sdk_s3::Config;
 use lexicon_cid::Cid;
 use rsky_common::env::env_str;
 use rsky_common::get_random_str;
@@ -24,16 +25,18 @@ pub struct S3BlobStore {
 // Intended to work with DigitalOcean Spaces Object Storage which is an
 // S3-compatible object storage service
 impl S3BlobStore {
-    pub fn new(did: String, cfg: &SdkConfig) -> Self {
-        let client = aws_sdk_s3::Client::new(cfg);
-        S3BlobStore {
-            client,
-            bucket: did,
-        }
+    pub fn new(did: String, cfg: Config) -> Self {
+        let client = aws_sdk_s3::Client::from_conf(cfg);
+        let bucket = if did.starts_with("did:web5") {
+            did[9..].to_string()
+        } else {
+            did
+        };
+        S3BlobStore { client, bucket }
     }
 
-    pub fn creator(cfg: &SdkConfig) -> Box<dyn Fn(String) -> S3BlobStore + '_> {
-        Box::new(move |did: String| S3BlobStore::new(did, cfg))
+    pub fn creator(cfg: Config) -> Box<dyn Fn(String) -> S3BlobStore> {
+        Box::new(move |did: String| S3BlobStore::new(did, cfg.clone()))
     }
 
     fn gen_key(&self) -> String {
@@ -213,5 +216,29 @@ impl S3BlobStore {
             .send()
             .await?;
         Ok(())
+    }
+
+    pub async fn bucket_exists(&self) -> Result<bool, ApiError> {
+        match self.client.list_buckets().send().await {
+            Ok(response) => Ok(response
+                .buckets
+                .unwrap_or_default()
+                .iter()
+                .any(|bucket| bucket.name.as_deref() == Some(&self.bucket))),
+            Err(e) => {
+                if e.to_string().contains("NoSuchBucket") {
+                    Ok(false)
+                } else {
+                    Err(ApiError::InvalidS3Error(e.to_string()))
+                }
+            }
+        }
+    }
+
+    pub async fn create_bucket(&self) -> Result<bool, ApiError> {
+        match self.client.create_bucket().bucket(&self.bucket).send().await {
+            Ok(_) => Ok(true),
+            Err(e) => Err(ApiError::InvalidS3Error(e.to_string())),
+        }
     }
 }

@@ -16,23 +16,27 @@ use futures::stream::{self, StreamExt};
 use lexicon_cid::Cid;
 use rocket::serde::json::Json;
 use rocket::State;
-use rsky_lexicon::com::atproto::repo::{ApplyWritesInput, ApplyWritesInputRefWrite};
+use rsky_lexicon::com::atproto::web5::{
+    CommitMeta, DirectWritesInput, DirectWritesInputRefWrite, DirectWritesOutput,
+    DirectWritesOutputRefWrite, RefWriteCreateResult, RefWriteDeleteResult, RefWriteUpdateResult,
+};
 use rsky_repo::types::PreparedWrite;
 use std::str::FromStr;
 
-async fn inner_apply_writes(
-    body: Json<ApplyWritesInput>,
+async fn inner_direct_writes(
+    body: Json<DirectWritesInput>,
     auth: AccessStandardIncludeChecks,
     sequencer: &State<SharedSequencer>,
     s3_config: &State<Config>,
     db: DbConn,
     account_manager: AccountManager,
-) -> Result<()> {
-    let tx: ApplyWritesInput = body.into_inner();
-    let ApplyWritesInput {
+) -> Result<DirectWritesOutput> {
+    let tx: DirectWritesInput = body.into_inner();
+    let DirectWritesInput {
         repo,
         validate,
         swap_commit,
+        root,
         ..
     } = tx;
     let account = account_manager
@@ -61,7 +65,7 @@ async fn inner_apply_writes(
         let writes: Vec<PreparedWrite> = stream::iter(tx.writes)
             .then(|write| async move {
                 Ok::<PreparedWrite, anyhow::Error>(match write {
-                    ApplyWritesInputRefWrite::Create(write) => PreparedWrite::Create(
+                    DirectWritesInputRefWrite::Create(write) => PreparedWrite::Create(
                         prepare_create(PrepareCreateOpts {
                             did: did.clone(),
                             collection: write.collection,
@@ -72,7 +76,7 @@ async fn inner_apply_writes(
                         })
                         .await?,
                     ),
-                    ApplyWritesInputRefWrite::Update(write) => PreparedWrite::Update(
+                    DirectWritesInputRefWrite::Update(write) => PreparedWrite::Update(
                         prepare_update(PrepareUpdateOpts {
                             did: did.clone(),
                             collection: write.collection,
@@ -83,7 +87,7 @@ async fn inner_apply_writes(
                         })
                         .await?,
                     ),
-                    ApplyWritesInputRefWrite::Delete(write) => {
+                    DirectWritesInputRefWrite::Delete(write) => {
                         PreparedWrite::Delete(prepare_delete(PrepareDeleteOpts {
                             did: did.clone(),
                             collection: write.collection,
@@ -103,11 +107,14 @@ async fn inner_apply_writes(
             None => None,
         };
 
-        let mut actor_store =
-            ActorStore::new(did.clone(), S3BlobStore::new(did.clone(), s3_config.inner().clone()), db);
+        let mut actor_store = ActorStore::new(
+            did.clone(),
+            S3BlobStore::new(did.clone(), s3_config.inner().clone()),
+            db,
+        );
 
         let commit = actor_store
-            .process_writes(writes.clone(), swap_commit_cid)
+            .verify_writes(writes.clone(), swap_commit_cid, tx.signing_key, root)
             .await?;
 
         let mut lock = sequencer.sequencer.write().await;
@@ -115,32 +122,70 @@ async fn inner_apply_writes(
         account_manager
             .update_repo_root(
                 did.to_string(),
-                commit.commit_data.cid,
-                commit.commit_data.rev,
+                commit.commit_data.cid.clone(),
+                commit.commit_data.rev.clone(),
             )
             .await?;
-        Ok(())
+
+        Ok(DirectWritesOutput {
+            commit: Some(CommitMeta {
+                cid: commit.commit_data.cid.to_string(),
+                rev: commit.commit_data.rev,
+            }),
+            results: Some(writes
+                .iter()
+                .map(|write| write_to_output_result(write, validate))
+                .collect()),
+        })
     } else {
         bail!("Could not find repo: `{repo}`")
     }
 }
 
 #[tracing::instrument(skip_all)]
-#[rocket::post("/xrpc/com.atproto.repo.applyWrites", format = "json", data = "<body>")]
-pub async fn apply_writes(
-    body: Json<ApplyWritesInput>,
+#[rocket::post(
+    "/xrpc/com.atproto.web5.directWrites",
+    format = "json",
+    data = "<body>"
+)]
+pub async fn direct_writes(
+    body: Json<DirectWritesInput>,
     auth: AccessStandardIncludeChecks,
     sequencer: &State<SharedSequencer>,
     s3_config: &State<Config>,
     db: DbConn,
     account_manager: AccountManager,
-) -> Result<(), ApiError> {
-    tracing::debug!("@LOG: debug apply_writes {body:#?}");
-    match inner_apply_writes(body, auth, sequencer, s3_config, db, account_manager).await {
-        Ok(()) => Ok(()),
+) -> Result<Json<DirectWritesOutput>, ApiError> {
+    tracing::debug!("@LOG: debug direct_writes {body:#?}");
+    match inner_direct_writes(body, auth, sequencer, s3_config, db, account_manager).await {
+        Ok(output) => Ok(Json(output)),
         Err(error) => {
             tracing::error!("@LOG: ERROR: {error}");
             Err(ApiError::RuntimeError)
         }
+    }
+}
+
+pub fn write_to_output_result(
+    write: &PreparedWrite,
+    validation: Option<bool>,
+) -> DirectWritesOutputRefWrite {
+    let validation_status = if validation == Some(true) {
+        Some("valid".to_string())
+    } else {
+        None
+    };
+    match write {
+        PreparedWrite::Create(inner) => DirectWritesOutputRefWrite::Create(RefWriteCreateResult {
+            cid: inner.cid.to_string(),
+            uri: inner.uri.clone(),
+            validation_status,
+        }),
+        PreparedWrite::Update(inner) => DirectWritesOutputRefWrite::Update(RefWriteUpdateResult {
+            cid: inner.cid.to_string(),
+            uri: inner.uri.clone(),
+            validation_status,
+        }),
+        PreparedWrite::Delete(_) => DirectWritesOutputRefWrite::Delete(RefWriteDeleteResult {}),
     }
 }

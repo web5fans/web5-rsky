@@ -162,3 +162,13 @@ dist
 .yarn/build-state.yml
 .yarn/install-state.gz
 .pnp.*
+
+rsky-relay/.venv
+rsky-relay/.python-version
+rsky-relay/main.py
+rsky-relay/pyproject.toml
+rsky-relay/uv.lock
+config.toml
+rsky-pds/pds_env
+
+.vscode

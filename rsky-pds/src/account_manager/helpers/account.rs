@@ -75,6 +75,8 @@ pub struct ActorAccount {
     pub invites_disabled: Option<i16>,
     #[serde(rename = "emailConfirmedAt")]
     pub email_confirmed_at: Option<String>,
+    #[serde(rename = "ckbAddress")]
+    pub ckb_address: Option<String>,
 }
 
 pub fn select_account_qb(flags: Option<AvailabilityFlags>) -> BoxedQuery<'static> {
@@ -123,6 +125,7 @@ pub async fn get_account(
                     ActorSchema::takedownRef,
                     ActorSchema::deactivatedAt,
                     ActorSchema::deleteAfter,
+                    ActorSchema::ckbAddress,
                     AccountSchema::email.nullable(),
                     AccountSchema::emailConfirmedAt.nullable(),
                     AccountSchema::invitesDisabled.nullable(),
@@ -131,6 +134,7 @@ pub async fn get_account(
                     String,
                     Option<String>,
                     String,
+                    Option<String>,
                     Option<String>,
                     Option<String>,
                     Option<String>,
@@ -145,9 +149,10 @@ pub async fn get_account(
                     takedown_ref: res.3,
                     deactivated_at: res.4,
                     delete_after: res.5,
-                    email: res.6,
-                    email_confirmed_at: res.7,
-                    invites_disabled: res.8,
+                    ckb_address: res.6,
+                    email: res.7,
+                    email_confirmed_at: res.8,
+                    invites_disabled: res.9,
                 })
                 .optional()
         })
@@ -171,6 +176,7 @@ pub async fn get_account_by_email(
                     ActorSchema::takedownRef,
                     ActorSchema::deactivatedAt,
                     ActorSchema::deleteAfter,
+                    ActorSchema::ckbAddress,
                     AccountSchema::email.nullable(),
                     AccountSchema::emailConfirmedAt.nullable(),
                     AccountSchema::invitesDisabled.nullable(),
@@ -185,6 +191,7 @@ pub async fn get_account_by_email(
                     Option<String>,
                     Option<String>,
                     Option<String>,
+                    Option<String>,
                     Option<i16>,
                 )>(conn)
                 .map(|res| ActorAccount {
@@ -194,9 +201,10 @@ pub async fn get_account_by_email(
                     takedown_ref: res.3,
                     deactivated_at: res.4,
                     delete_after: res.5,
-                    email: res.6,
-                    email_confirmed_at: res.7,
-                    invites_disabled: res.8,
+                    ckb_address: res.6,
+                    email: res.7,
+                    email_confirmed_at: res.8,
+                    invites_disabled: res.9,
                 })
                 .optional()
         })
@@ -208,6 +216,7 @@ pub async fn register_actor(
     did: String,
     handle: String,
     deactivated: Option<bool>,
+    ckb_addr: Option<String>,
     db: &DbConn,
 ) -> Result<()> {
     let system_time = SystemTime::now();
@@ -234,6 +243,7 @@ pub async fn register_actor(
                     ActorSchema::createdAt.eq(created_at),
                     ActorSchema::deactivatedAt.eq(deactivate_at),
                     ActorSchema::deleteAfter.eq(deactivate_after),
+                    ActorSchema::ckbAddress.eq(ckb_addr),
                 ))
                 .on_conflict_do_nothing()
                 .returning(ActorSchema::did)

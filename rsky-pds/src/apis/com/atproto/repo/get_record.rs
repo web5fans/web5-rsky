@@ -5,7 +5,7 @@ use crate::apis::ApiError;
 use crate::db::DbConn;
 use crate::pipethrough::{pipethrough, OverrideOpts, ProxyRequest};
 use anyhow::{bail, Result};
-use aws_config::SdkConfig;
+use aws_sdk_s3::Config;
 use rocket::serde::json::Json;
 use rocket::State;
 use rsky_lexicon::com::atproto::repo::GetRecordOutput;
@@ -17,7 +17,7 @@ async fn inner_get_record(
     collection: String,
     rkey: String,
     cid: Option<String>,
-    s3_config: &State<SdkConfig>,
+    s3_config: &State<Config>,
     db: DbConn,
     req: ProxyRequest<'_>,
     account_manager: AccountManager,
@@ -29,7 +29,7 @@ async fn inner_get_record(
         let uri = AtUri::make(did.clone(), Some(collection), Some(rkey))?;
 
         let mut actor_store =
-            ActorStore::new(did.clone(), S3BlobStore::new(did.clone(), s3_config), db);
+            ActorStore::new(did.clone(), S3BlobStore::new(did.clone(), s3_config.inner().clone()), db);
 
         match actor_store.record.get_record(&uri, cid, None).await {
             Ok(Some(record)) if record.takedown_ref.is_none() => Ok(GetRecordOutput {
@@ -72,7 +72,7 @@ pub async fn get_record(
     collection: String,
     rkey: String,
     cid: Option<String>,
-    s3_config: &State<SdkConfig>,
+    s3_config: &State<Config>,
     db: DbConn,
     req: ProxyRequest<'_>,
     account_manager: AccountManager,

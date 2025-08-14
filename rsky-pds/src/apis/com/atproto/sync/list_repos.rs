@@ -135,6 +135,7 @@ impl TimeDidKeySet {
             String,
             Option<String>,
             Option<String>,
+            Option<String>,
         )>,
     > {
         let KeySetPaginateOpts {
@@ -158,6 +159,7 @@ impl TimeDidKeySet {
                 ActorSchema::createdAt,
                 ActorSchema::deactivatedAt,
                 ActorSchema::takedownRef,
+                ActorSchema::ckbAddress,
             ))
             .limit(limit)
             .into_boxed();
@@ -205,6 +207,7 @@ impl TimeDidKeySet {
                     String,
                     Option<String>,
                     Option<String>,
+                    Option<String>,
                 )>(conn)
             })
             .await?;
@@ -246,6 +249,7 @@ async fn inner_list_repos(
                     takedown_ref: row.5,
                     deactivated_at: row.4,
                     delete_after: None,
+                    ckb_address: row.6,
                     email: None,
                     invites_disabled: None,
                     email_confirmed_at: None,

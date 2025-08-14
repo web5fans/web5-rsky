@@ -16,20 +16,22 @@ use futures::stream::{self, StreamExt};
 use lexicon_cid::Cid;
 use rocket::serde::json::Json;
 use rocket::State;
-use rsky_lexicon::com::atproto::repo::{ApplyWritesInput, ApplyWritesInputRefWrite};
+use rsky_lexicon::com::atproto::web5::{
+    PreDirectWritesInput, PreDirectWritesInputRefWrite, PreDirectWritesOutput,
+};
 use rsky_repo::types::PreparedWrite;
 use std::str::FromStr;
 
-async fn inner_apply_writes(
-    body: Json<ApplyWritesInput>,
+async fn inner_pre_writes(
+    body: Json<PreDirectWritesInput>,
     auth: AccessStandardIncludeChecks,
-    sequencer: &State<SharedSequencer>,
+    _sequencer: &State<SharedSequencer>,
     s3_config: &State<Config>,
     db: DbConn,
     account_manager: AccountManager,
-) -> Result<()> {
-    let tx: ApplyWritesInput = body.into_inner();
-    let ApplyWritesInput {
+) -> Result<PreDirectWritesOutput> {
+    let tx: PreDirectWritesInput = body.into_inner();
+    let PreDirectWritesInput {
         repo,
         validate,
         swap_commit,
@@ -61,7 +63,7 @@ async fn inner_apply_writes(
         let writes: Vec<PreparedWrite> = stream::iter(tx.writes)
             .then(|write| async move {
                 Ok::<PreparedWrite, anyhow::Error>(match write {
-                    ApplyWritesInputRefWrite::Create(write) => PreparedWrite::Create(
+                    PreDirectWritesInputRefWrite::Create(write) => PreparedWrite::Create(
                         prepare_create(PrepareCreateOpts {
                             did: did.clone(),
                             collection: write.collection,
@@ -72,7 +74,7 @@ async fn inner_apply_writes(
                         })
                         .await?,
                     ),
-                    ApplyWritesInputRefWrite::Update(write) => PreparedWrite::Update(
+                    PreDirectWritesInputRefWrite::Update(write) => PreparedWrite::Update(
                         prepare_update(PrepareUpdateOpts {
                             did: did.clone(),
                             collection: write.collection,
@@ -83,7 +85,7 @@ async fn inner_apply_writes(
                         })
                         .await?,
                     ),
-                    ApplyWritesInputRefWrite::Delete(write) => {
+                    PreDirectWritesInputRefWrite::Delete(write) => {
                         PreparedWrite::Delete(prepare_delete(PrepareDeleteOpts {
                             did: did.clone(),
                             collection: write.collection,
@@ -103,41 +105,48 @@ async fn inner_apply_writes(
             None => None,
         };
 
-        let mut actor_store =
-            ActorStore::new(did.clone(), S3BlobStore::new(did.clone(), s3_config.inner().clone()), db);
+        let mut actor_store = ActorStore::new(
+            did.clone(),
+            S3BlobStore::new(did.clone(), s3_config.inner().clone()),
+            db,
+        );
 
         let commit = actor_store
-            .process_writes(writes.clone(), swap_commit_cid)
+            .generate_commit(writes.clone(), swap_commit_cid)
             .await?;
 
-        let mut lock = sequencer.sequencer.write().await;
-        lock.sequence_commit(did.clone(), commit.clone()).await?;
-        account_manager
-            .update_repo_root(
-                did.to_string(),
-                commit.commit_data.cid,
-                commit.commit_data.rev,
-            )
-            .await?;
-        Ok(())
+        let un_sign_bytes = hex::encode(serde_ipld_dagcbor::to_vec(&commit)?);
+
+        return Ok(PreDirectWritesOutput {
+            did: commit.did,
+            rev: commit.rev,
+            data: commit.data.to_string(),
+            prev: commit.prev.map(|cid| cid.to_string()),
+            version: commit.version,
+            un_sign_bytes,
+        });
     } else {
         bail!("Could not find repo: `{repo}`")
     }
 }
 
 #[tracing::instrument(skip_all)]
-#[rocket::post("/xrpc/com.atproto.repo.applyWrites", format = "json", data = "<body>")]
-pub async fn apply_writes(
-    body: Json<ApplyWritesInput>,
+#[rocket::post(
+    "/xrpc/com.atproto.web5.preDirectWrites",
+    format = "json",
+    data = "<body>"
+)]
+pub async fn pre_direct_writes(
+    body: Json<PreDirectWritesInput>,
     auth: AccessStandardIncludeChecks,
     sequencer: &State<SharedSequencer>,
     s3_config: &State<Config>,
     db: DbConn,
     account_manager: AccountManager,
-) -> Result<(), ApiError> {
+) -> Result<Json<PreDirectWritesOutput>, ApiError> {
     tracing::debug!("@LOG: debug apply_writes {body:#?}");
-    match inner_apply_writes(body, auth, sequencer, s3_config, db, account_manager).await {
-        Ok(()) => Ok(()),
+    match inner_pre_writes(body, auth, sequencer, s3_config, db, account_manager).await {
+        Ok(res) => Ok(Json(res)),
         Err(error) => {
             tracing::error!("@LOG: ERROR: {error}");
             Err(ApiError::RuntimeError)

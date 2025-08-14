@@ -41,6 +41,7 @@ pub struct CreateAccountOpts {
     pub repo_rev: String,
     pub invite_code: Option<String>,
     pub deactivated: Option<bool>,
+    pub ckb_addr: Option<String>,
 }
 
 pub struct ConfirmEmailOpts<'em> {
@@ -141,6 +142,7 @@ impl AccountManager {
             repo_rev,
             invite_code,
             deactivated,
+            ckb_addr,
         } = opts;
         let password_encrypted: Option<String> = match password {
             Some(password) => Some(password::gen_salt_and_hash(password)?),
@@ -166,7 +168,7 @@ impl AccountManager {
         if let Some(invite_code) = invite_code.clone() {
             invite::ensure_invite_is_available(invite_code, db.as_ref()).await?;
         }
-        account::register_actor(did.clone(), handle, deactivated, db.as_ref()).await?;
+        account::register_actor(did.clone(), handle, deactivated, ckb_addr, db.as_ref()).await?;
         if let (Some(email), Some(password_encrypted)) = (email, password_encrypted) {
             account::register_account(did.clone(), email, password_encrypted, db.as_ref()).await?;
         }

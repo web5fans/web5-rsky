@@ -8,7 +8,7 @@ use crate::db::DbConn;
 use crate::repo::prepare::{prepare_create, prepare_delete, PrepareCreateOpts, PrepareDeleteOpts};
 use crate::SharedSequencer;
 use anyhow::{bail, Result};
-use aws_config::SdkConfig;
+use aws_sdk_s3::Config;
 use lexicon_cid::Cid;
 use rocket::serde::json::Json;
 use rocket::State;
@@ -21,7 +21,7 @@ async fn inner_create_record(
     body: Json<CreateRecordInput>,
     auth: AccessStandardIncludeChecks,
     sequencer: &State<SharedSequencer>,
-    s3_config: &State<SdkConfig>,
+    s3_config: &State<Config>,
     db: DbConn,
     account_manager: AccountManager,
 ) -> Result<CreateRecordOutput> {
@@ -65,7 +65,7 @@ async fn inner_create_record(
         .await?;
 
         let mut actor_store =
-            ActorStore::new(did.clone(), S3BlobStore::new(did.clone(), s3_config), db);
+            ActorStore::new(did.clone(), S3BlobStore::new(did.clone(), s3_config.inner().clone()), db);
         let backlink_conflicts: Vec<AtUri> = match validate {
             Some(true) => {
                 let write_at_uri: AtUri = write.uri.clone().try_into()?;
@@ -121,7 +121,7 @@ pub async fn create_record(
     body: Json<CreateRecordInput>,
     auth: AccessStandardIncludeChecks,
     sequencer: &State<SharedSequencer>,
-    s3_config: &State<SdkConfig>,
+    s3_config: &State<Config>,
     db: DbConn,
     account_manager: AccountManager,
 ) -> Result<Json<CreateRecordOutput>, ApiError> {

@@ -4,13 +4,13 @@ use crate::apis::ApiError;
 use crate::auth_verifier::AccessStandard;
 use crate::db::DbConn;
 use anyhow::Result;
-use aws_config::SdkConfig;
+use aws_sdk_s3::Config;
 use rocket::serde::json::Json;
 use rocket::State;
 use rsky_lexicon::app::bsky::actor::{GetPreferencesOutput, RefPreferences};
 
 async fn inner_get_preferences(
-    s3_config: &State<SdkConfig>,
+    s3_config: &State<Config>,
     auth: AccessStandard,
     db: DbConn,
 ) -> Result<GetPreferencesOutput> {
@@ -18,7 +18,7 @@ async fn inner_get_preferences(
     let requester = auth.did.unwrap().clone();
     let actor_store = ActorStore::new(
         requester.clone(),
-        S3BlobStore::new(requester.clone(), s3_config),
+        S3BlobStore::new(requester.clone(), s3_config.inner().clone()),
         db,
     );
     let preferences: Vec<RefPreferences> = actor_store
@@ -34,7 +34,7 @@ async fn inner_get_preferences(
 #[tracing::instrument(skip_all)]
 #[rocket::get("/xrpc/app.bsky.actor.getPreferences")]
 pub async fn get_preferences(
-    s3_config: &State<SdkConfig>,
+    s3_config: &State<Config>,
     auth: AccessStandard,
     db: DbConn,
 ) -> Result<Json<GetPreferencesOutput>, ApiError> {
