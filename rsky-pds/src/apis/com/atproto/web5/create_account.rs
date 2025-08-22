@@ -6,11 +6,10 @@ use crate::apis::ApiError;
 use crate::auth_verifier::UserDidAuthOptional;
 use crate::config::ServerConfig;
 use crate::db::DbConn;
+use crate::plc::web5_types::{generate_random_string, get_didoc_from_chain};
 use crate::sequencer::events::sync_evt_data_from_commit;
-use crate::SharedIdResolver;
 use crate::SharedSequencer;
 use aws_sdk_s3::Config;
-use rand::{distributions::Alphanumeric, Rng};
 use rocket::serde::json::Json;
 use rocket::State;
 use rsky_lexicon::com::atproto::web5::{CreateAccountInput, CreateAccountOutput};
@@ -45,6 +44,16 @@ pub async fn create_account(
     let did = input.root.did.clone();
     let handle = input.handle.clone();
 
+    match get_didoc_from_chain(&input.ckb_addr).await {
+        Ok(_) => {
+            return Err(ApiError::InvalidCkbError(format!(
+                "Already apply did, please change address."
+            )))
+        }
+        Err(ApiError::CkbDidocCellNotFound) => {},
+        Err(error) => return Err(error),
+    }
+
     // Create new actor repo TODO: Proper rollback
     let mut actor_store = ActorStore::new(
         did.clone(),
@@ -63,14 +72,6 @@ pub async fn create_account(
         }
     };
 
-    fn generate_random_string(length: usize) -> String {
-        rand::thread_rng()
-            .sample_iter(&Alphanumeric)
-            .take(length)
-            .map(char::from)
-            .collect()
-    }
-
     // Create Account
     let (access_jwt, refresh_jwt);
     match account_manager
@@ -78,7 +79,7 @@ pub async fn create_account(
             did: did.clone(),
             handle: handle.clone(),
             email: Some(format!("web5Mock{}@web5.com", generate_random_string(10))),
-            password: Some(input.password),
+            password: Some(generate_random_string(16)),
             repo_cid: commit.commit_data.cid,
             repo_rev: commit.commit_data.rev.clone(),
             invite_code: input.invite_code,

@@ -10,7 +10,7 @@ use crate::repo::prepare::{
     PrepareUpdateOpts,
 };
 use crate::SharedSequencer;
-use anyhow::{bail, Result};
+use anyhow::bail;
 use aws_sdk_s3::Config;
 use futures::stream::{self, StreamExt};
 use lexicon_cid::Cid;
@@ -29,7 +29,7 @@ async fn inner_pre_writes(
     s3_config: &State<Config>,
     db: DbConn,
     account_manager: AccountManager,
-) -> Result<PreDirectWritesOutput> {
+) -> Result<PreDirectWritesOutput, ApiError> {
     let tx: PreDirectWritesInput = body.into_inner();
     let PreDirectWritesInput {
         repo,
@@ -49,15 +49,30 @@ async fn inner_pre_writes(
 
     if let Some(account) = account {
         if account.deactivated_at.is_some() {
-            bail!("Account is deactivated")
+            return Err(ApiError::InvalidRequest(
+                "Account is deactivated".to_string(),
+            ));
         }
         let did = account.did;
-        if did != auth.access.credentials.unwrap().did.unwrap() {
-            bail!("AuthRequiredError")
+        if did
+            != auth
+                .access
+                .credentials
+                .ok_or(ApiError::AuthRequiredError("".to_string()))?
+                .did
+                .ok_or(ApiError::InvalidRequest(
+                    "Auth credentials require did ".to_string(),
+                ))?
+        {
+            return Err(ApiError::AuthRequiredError(
+                "Did is inconsistent with origin".to_string(),
+            ));
         }
         let did: &String = &did;
         if tx.writes.len() > 200 {
-            bail!("Too many writes. Max: 200")
+            return Err(ApiError::InvalidRequest(
+                "Too many writes. Max: 200".to_string(),
+            ));
         }
 
         let writes: Vec<PreparedWrite> = stream::iter(tx.writes)
@@ -101,7 +116,10 @@ async fn inner_pre_writes(
             .collect::<Result<Vec<PreparedWrite>, _>>()?;
 
         let swap_commit_cid = match swap_commit {
-            Some(swap_commit) => Some(Cid::from_str(&swap_commit)?),
+            Some(swap_commit) => Some(
+                Cid::from_str(&swap_commit)
+                    .map_err(|_| ApiError::InvalidRequest("Swap commit convert error".to_string()))?,
+            ),
             None => None,
         };
 
@@ -115,7 +133,10 @@ async fn inner_pre_writes(
             .generate_commit(writes.clone(), swap_commit_cid)
             .await?;
 
-        let un_sign_bytes = hex::encode(serde_ipld_dagcbor::to_vec(&commit)?);
+        let un_sign_bytes =
+            hex::encode(serde_ipld_dagcbor::to_vec(&commit).map_err(|_| {
+                ApiError::InvalidRequest("Dag-cbor encoding commit error".to_string())
+            })?);
 
         return Ok(PreDirectWritesOutput {
             did: commit.did,
@@ -126,7 +147,9 @@ async fn inner_pre_writes(
             un_sign_bytes,
         });
     } else {
-        bail!("Could not find repo: `{repo}`")
+        Err(ApiError::InvalidRequest(format!(
+            "Could not find repo: `{repo}`"
+        )))
     }
 }
 
@@ -148,8 +171,8 @@ pub async fn pre_direct_writes(
     match inner_pre_writes(body, auth, sequencer, s3_config, db, account_manager).await {
         Ok(res) => Ok(Json(res)),
         Err(error) => {
-            tracing::error!("@LOG: ERROR: {error}");
-            Err(ApiError::RuntimeError)
+            tracing::error!("@LOG: ERROR: {error:?}");
+            Err(error)
         }
     }
 }

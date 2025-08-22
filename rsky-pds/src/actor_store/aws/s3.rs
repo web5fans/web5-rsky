@@ -8,7 +8,6 @@ use aws_sdk_s3::primitives::ByteStream;
 use aws_sdk_s3::types::{Delete, ObjectCannedAcl, ObjectIdentifier};
 use aws_sdk_s3::Config;
 use lexicon_cid::Cid;
-use rsky_common::env::env_str;
 use rsky_common::get_random_str;
 
 struct MoveObject {
@@ -47,6 +46,10 @@ impl S3BlobStore {
         format!("tmp/{0}/{1}", self.bucket, key)
     }
 
+    fn get_source_path(&self, key: &String) -> String {
+        format!("{0}/tmp/{1}/{2}", self.bucket, self.bucket, key)
+    }
+
     fn get_stored_path(&self, cid: Cid) -> String {
         format!("blocks/{0}/{1}", self.bucket, cid)
     }
@@ -74,7 +77,7 @@ impl S3BlobStore {
         if !already_has {
             Ok(self
                 .move_object(MoveObject {
-                    from: self.get_tmp_path(&key),
+                    from: self.get_source_path(&key),
                     to: self.get_stored_path(cid),
                 })
                 .await?)
@@ -199,12 +202,7 @@ impl S3BlobStore {
         self.client
             .copy_object()
             .bucket(&self.bucket)
-            .copy_source(format!(
-                "{0}/{1}/{2}",
-                env_str("AWS_ENDPOINT_BUCKET").unwrap(),
-                self.bucket,
-                keys.from
-            ))
+            .copy_source(keys.from.clone())
             .key(keys.to)
             .acl(ObjectCannedAcl::PublicRead)
             .send()
@@ -236,7 +234,13 @@ impl S3BlobStore {
     }
 
     pub async fn create_bucket(&self) -> Result<bool, ApiError> {
-        match self.client.create_bucket().bucket(&self.bucket).send().await {
+        match self
+            .client
+            .create_bucket()
+            .bucket(&self.bucket)
+            .send()
+            .await
+        {
             Ok(_) => Ok(true),
             Err(e) => Err(ApiError::InvalidS3Error(e.to_string())),
         }

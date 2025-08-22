@@ -108,6 +108,9 @@ pub enum ApiError {
     WellKnownNotFound,
     AccountNotFound,
     BlobNotFound,
+    CkbAddrNotFound,
+    CkbDidocCellNotFound,
+    CkbAddrNoCell,
     BadRequest(String, String),
     AuthRequiredError(String),
     InvalidCkbError(String),
@@ -391,6 +394,51 @@ impl<'r, 'o: 'r> ::rocket::response::Responder<'r, 'o> for ApiError {
                     &[],
                 )));
                 res.set_status(Status { code: 404u16 });
+                Ok(res)
+            }
+            ApiError::CkbAddrNotFound => {
+                let body = Json(ErrorBody {
+                    error: "CkbAddrNotFound".to_string(),
+                    message: "Ckb address could not be found".to_string(),
+                });
+                let mut res =
+                    <Json<ErrorBody> as ::rocket::response::Responder>::respond_to(body, __req)?;
+                res.set_header(ContentType(rocket::http::MediaType::const_new(
+                    "application",
+                    "json",
+                    &[],
+                )));
+                res.set_status(Status { code: 400u16 });
+                Ok(res)
+            }
+            ApiError::CkbDidocCellNotFound => {
+                let body = Json(ErrorBody {
+                    error: "CkbDidocCellNotFound".to_string(),
+                    message: "Liv ckb did doc could not be found".to_string(),
+                });
+                let mut res =
+                    <Json<ErrorBody> as ::rocket::response::Responder>::respond_to(body, __req)?;
+                res.set_header(ContentType(rocket::http::MediaType::const_new(
+                    "application",
+                    "json",
+                    &[],
+                )));
+                res.set_status(Status { code: 400u16 });
+                Ok(res)
+            }
+            ApiError::CkbAddrNoCell => {
+                let body = Json(ErrorBody {
+                    error: "CkbAddrNoCell".to_string(),
+                    message: "No live cell be found".to_string(),
+                });
+                let mut res =
+                    <Json<ErrorBody> as ::rocket::response::Responder>::respond_to(body, __req)?;
+                res.set_header(ContentType(rocket::http::MediaType::const_new(
+                    "application",
+                    "json",
+                    &[],
+                )));
+                res.set_status(Status { code: 400u16 });
                 Ok(res)
             }
             ApiError::BadRequest(error, message) => {

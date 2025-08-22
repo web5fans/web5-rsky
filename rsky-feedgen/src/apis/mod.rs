@@ -527,7 +527,7 @@ fn extract_hashtags(input: &str) -> HashSet<&str> {
     static RE: Lazy<Regex> = Lazy::new(|| Regex::new(r"\#[a-zA-Z][0-9a-zA-Z_]*").unwrap());
 
     // Use the regex to find hashtags in the input
-    RE.find_iter(input).map(|mat| mat.as_str()).collect()
+    RE.find_iter(input).map(|mat: regex::Match<'_>| mat.as_str()).collect()
 }
 
 pub async fn queue_creation(

@@ -1,11 +1,15 @@
 use crate::apis::ApiError;
 use crate::plc::cell_data::{DidWeb5Data, DidWeb5DataUnion};
+use anyhow::{bail, Result};
 use ckb_jsonrpc_types::{OutPoint, Uint32};
 use ckb_sdk::{Address, CkbRpcAsyncClient};
 use ckb_types::{packed::Script, H256};
 use molecule::prelude::Entity;
+use rand::{distributions::Alphanumeric, Rng};
+use rsky_lexicon::com::atproto::web5::{IndexActionInputRef, PreIndexActionInputRef};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use std::time::{SystemTime, UNIX_EPOCH};
 use std::{collections::BTreeMap, str::FromStr};
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
@@ -135,8 +139,8 @@ impl OpOrTombstone {
     }
 }
 
-pub async fn get_didoc_from_chain(ckb_addr: String) -> Result<Web5DocumentData, ApiError> {
-    let addr = Address::from_str(&ckb_addr)
+pub async fn get_didoc_from_chain(ckb_addr: &str) -> Result<Web5DocumentData, ApiError> {
+    let addr = Address::from_str(ckb_addr)
         .map_err(|_| ApiError::InvalidCkbError(format!("Address format invalid")))?;
     let script: Script = (&addr).into();
     let address_hash = "0x".to_string() + &hex::encode(script.calc_script_hash().raw_data());
@@ -152,6 +156,9 @@ pub async fn get_didoc_from_chain(ckb_addr: String) -> Result<Web5DocumentData, 
         .text()
         .await
         .map_err(|_| ApiError::InvalidCkbError(format!("CKB Testnet Response")))?;
+    if data.len() == 0 {
+        return Err(ApiError::CkbAddrNoCell);
+    }
     let json: Value = serde_json::from_str(&data)
         .map_err(|_| ApiError::InvalidCkbError(format!("CKB Testnet Response Convert")))?;
 
@@ -184,14 +191,84 @@ pub async fn get_didoc_from_chain(ckb_addr: String) -> Result<Web5DocumentData, 
         if let Some(cell) = cell.cell {
             if let Some(cell_data) = cell.data {
                 let bytes = cell_data.content.as_bytes();
-                let did_data = DidWeb5Data::from_slice(bytes).unwrap();
+                let did_data = DidWeb5Data::from_slice(bytes).map_err(|_| {
+                    ApiError::InvalidCkbError("DidWeb5Data convert failed".to_string())
+                })?;
                 let DidWeb5DataUnion::DidWeb5DataV1(did_data_v1) = did_data.to_enum();
                 let did_doc = did_data_v1.document();
-                return Ok(serde_ipld_dagcbor::from_slice(&did_doc.raw_data()).unwrap());
+                Ok(
+                    serde_ipld_dagcbor::from_slice(&did_doc.raw_data()).map_err(|_| {
+                        ApiError::InvalidCkbError(
+                            "Web5DocumentData dog cbor decode failed".to_string(),
+                        )
+                    })?,
+                )
+            } else {
+                return Err(ApiError::InvalidCkbError("Cell data not found".to_string()));
+            }
+        } else {
+            return Err(ApiError::InvalidCkbError("Cell info not found".to_string()));
+        }
+    } else {
+        Err(ApiError::CkbDidocCellNotFound)
+    }
+}
+
+pub fn generate_random_string(length: usize) -> String {
+    rand::thread_rng()
+        .sample_iter(&Alphanumeric)
+        .take(length)
+        .map(char::from)
+        .collect()
+}
+
+pub fn extract_timestamp(message: &str) -> Result<u64> {
+    for line in message.lines() {
+        if line.starts_with("Timestamp: ") {
+            let timestamp_str = line.trim_start_matches("Timestamp: ");
+            match timestamp_str.trim().parse() {
+                Ok(time) => return Ok(time),
+                Err(_) => bail!("Timestamp parse error"),
             }
         }
     }
-    Err(ApiError::InvalidCkbError(format!(
-        "CKB Testnet Response referring_cells error"
-    )))
+    bail!("Can't find Timestamp in message!")
+}
+
+pub fn timestamp_check(timestamp: u64) -> Result<bool> {
+    let current_timestamp = match SystemTime::now().duration_since(UNIX_EPOCH) {
+        Ok(dur) => dur.as_secs(),
+        Err(_) => bail!("Can't get unix timestamp from local"),
+    };
+
+    Ok(current_timestamp.saturating_sub(timestamp) < 120) // 2 min check
+}
+
+pub fn statement_check(message: &str, index: &IndexActionInputRef) -> Result<bool> {
+    for line in message.lines() {
+        if line.contains(&index.statement()) {
+            return Ok(true);
+        }
+    }
+    bail!("Statement check error")
+}
+
+pub fn generate_challenge(
+    domain: String,
+    ckb_addr: String,
+    handle: String,
+    index: &PreIndexActionInputRef,
+) -> Result<String> {
+    let ts = match SystemTime::now().duration_since(UNIX_EPOCH) {
+        Ok(dur) => dur.as_secs(),
+        Err(_) => bail!("Can't get unix timestamp from local"),
+    };
+    Ok(format!(
+        "Web5 Login\nDomain: {}\nAddress: {}\nHandle: {}\nTimestamp: {}\nStatement: {}",
+        domain,
+        ckb_addr,
+        handle,
+        ts,
+        index.statement(),
+    ))
 }

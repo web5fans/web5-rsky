@@ -64,8 +64,13 @@ pub struct GetBlobMetadataOutput {
 // Basically handles getting blob records from db
 impl BlobReader {
     pub fn new(blobstore: S3BlobStore, db: Arc<DbConn>) -> Self {
+        let did = if blobstore.bucket.starts_with("did") {
+            blobstore.bucket.clone()
+        } else {
+            format!("did:web5:{}", blobstore.bucket)
+        };
         BlobReader {
-            did: blobstore.bucket.clone(),
+            did,
             blobstore,
             db,
         }

@@ -1,4 +1,6 @@
+use crate::com::atproto::repo::Blob;
 use serde_json::Value;
+use std::collections::BTreeMap;
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
 #[serde(rename_all = "camelCase")]
@@ -26,7 +28,7 @@ pub struct PreCreateAccountOutput {
 pub struct CreateAccountInput {
     pub handle: String,
     pub signing_key: String,
-    pub password: String,
+    pub password: Option<String>,
     pub root: SignedRoot,
     pub ckb_addr: String,
     pub invite_code: Option<String>,
@@ -151,18 +153,106 @@ pub struct PreDirectWritesOutput {
     pub un_sign_bytes: String,
 }
 
+/// Precreate an authentication session.
+#[derive(Debug, Deserialize, Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct PreIndexActionInput {
+    /// Handle or other identifier supported by the server for the authenticating user.
+    pub did: String,
+    pub ckb_addr: Option<String>,
+    pub index: PreIndexActionInputRef,
+}
+
+#[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
+#[serde(tag = "$type")]
+pub enum PreIndexActionInputRef {
+    #[serde(rename = "com.atproto.web5.preIndexAction#createSession")]
+    CreateSessionIndex(RefCreateSessionIndex),
+    #[serde(rename = "com.atproto.web5.preIndexAction#deleteAccount")]
+    DeleteAccountIndex(RefDeleteAccountIndex),
+}
+
+impl PreIndexActionInputRef {
+    pub fn statement(&self) -> String {
+        match self {
+            PreIndexActionInputRef::CreateSessionIndex(_) => {
+                "Sign this message to authenticate with login on pds: web5.bbs.fans.".to_string()
+            }
+            PreIndexActionInputRef::DeleteAccountIndex(_) => {
+                "Sign this message to authenticate with delete account on pds: web5.bbs.fans."
+                    .to_string()
+            }
+        }
+    }
+}
+
+#[derive(Debug, Deserialize, PartialEq, Serialize, Clone)]
+pub struct RefCreateSessionIndex {}
+
+#[derive(Debug, Deserialize, PartialEq, Serialize, Clone)]
+pub struct RefDeleteAccountIndex {}
+
+#[derive(Debug, Deserialize, Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct PreIndexActionOutput {
+    /// Handle or other identifier supported by the server for the authenticating user.
+    pub did: String,
+    pub handle: String,
+    pub message: String,
+}
+
 /// Create an authentication session.
 #[derive(Debug, Deserialize, Serialize, Clone)]
 #[serde(rename_all = "camelCase")]
-pub struct CreateSessionInput {
+pub struct IndexActionInput {
     /// Handle or other identifier supported by the server for the authenticating user.
-    pub identifier: String,
-    pub password: String,
+    pub did: String,
+    pub message: String,
+    pub signing_key: String,
+    pub signed_bytes: String,
     pub ckb_addr: Option<String>,
+    pub index: IndexActionInputRef,
+}
+
+#[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
+#[serde(tag = "$type")]
+pub enum IndexActionInputRef {
+    #[serde(rename = "com.atproto.web5.indexAction#createSession")]
+    CreateSessionIndex(RefCreateSessionIndex),
+    #[serde(rename = "com.atproto.web5.indexAction#deleteAccount")]
+    DeleteAccountIndex(RefDeleteAccountIndex),
+}
+
+impl IndexActionInputRef {
+    pub fn statement(&self) -> String {
+        match self {
+            IndexActionInputRef::CreateSessionIndex(_) => {
+                "Sign this message to authenticate with login on pds: web5.bbs.fans.".to_string()
+            }
+            IndexActionInputRef::DeleteAccountIndex(_) => {
+                "Sign this message to authenticate with delete account on pds: web5.bbs.fans."
+                    .to_string()
+            }
+        }
+    }
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
-pub struct CreateSessionOutput {
+pub struct IndexActionOutput {
+    pub result: IndexActionOutputRefResult,
+}
+
+#[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
+#[serde(tag = "$type")]
+pub enum IndexActionOutputRefResult {
+    #[serde(rename = "com.atproto.web5.indexAction#createSessionResult")]
+    CreateSessionResult(RefCreateSessionResult),
+    #[serde(rename = "com.atproto.web5.indexAction#deleteAccountResult")]
+    DeleteAccountResult(RefDeleteAccountResult),
+}
+
+#[derive(Debug, Deserialize, PartialEq, Serialize, Clone)]
+pub struct RefCreateSessionResult {
     #[serde(rename = "accessJwt")]
     pub access_jwt: String,
     #[serde(rename = "refreshJwt")]
@@ -170,11 +260,14 @@ pub struct CreateSessionOutput {
     pub handle: String,
     pub did: String,
     #[serde(rename = "didDoc", skip_serializing_if = "Option::is_none")]
-    pub did_doc: Option<String>,
+    pub did_doc: Option<Value>,
     pub email: Option<String>,
     #[serde(rename = "emailConfirmed", skip_serializing_if = "Option::is_none")]
     pub email_confirmed: Option<bool>,
 }
+
+#[derive(Debug, Deserialize, PartialEq, Serialize, Clone)]
+pub struct RefDeleteAccountResult {}
 
 #[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -223,4 +316,11 @@ pub struct RefWriteDeleteResult {}
 pub struct CommitMeta {
     pub cid: String,
     pub rev: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BlobOutput {
+    pub blob_server: String,
+    pub blob: Blob,
 }
